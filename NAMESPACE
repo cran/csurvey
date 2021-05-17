@@ -1,0 +1,16 @@
+exportPattern("csvy", "block.Ord", "incr", "decr", "plotpersp")
+import("coneproj", "Matrix", "survey", "MASS", "purrr")
+importFrom("stats", "pbeta", "fitted", "gaussian", "median", "model.frame", "model.matrix", "model.response", "rnorm", "as.formula", "sd", "make.link", "qnorm", "vcov", "aggregate")
+#importFrom("utils", "head")
+importFrom("Matrix", "bdiag", "rankMatrix")
+importFrom("graphics", "par", "persp", "grid", "legend", "plot", "points", "segments")
+importFrom("grDevices", "topo.colors", "cm.colors", "heat.colors", "terrain.colors", "rgb","col2rgb")
+
+S3method(fitted, csvy)
+S3method(print, csvy)
+S3method(plotpersp, csvy)
+
+#S3method(summary, csvy)
+#S3method(print, summary.csvy)
+#S3method(predict, csvy)
+
