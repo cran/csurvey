@@ -1,5 +1,8 @@
+#############################
+## main routine for the user#
+#############################
 csvy <- function(formula, data, design, nD=NULL, family=gaussian, amat=NULL, 
-                level=0.95, n.mix=100L, test=TRUE) {
+                level=0.95, n.mix=100L, test=TRUE, alpha=NULL) {
   cl <- match.call()
   if (is.character(family))
     family <- get(family, mode = "function", envir = parent.frame())
@@ -79,11 +82,11 @@ csvy <- function(formula, data, design, nD=NULL, family=gaussian, amat=NULL,
   fit <- eval(call("csvy.fit", design = design, M = nD, relaxes = relaxes, xm = xmat_add, 
                    sh = shapes_add, ynm = ynm, amat = amat, 
                    block.ave.lst = block.ave.lst, block.ord.lst = block.ord.lst, 
-                   level = level, n.mix = n.mix, cl = cl, test = test))
-  rslt <- list(design = design, data = data, muhat = fit$muhat, muhat.s = fit$muhat.s, muhat.un = fit$muhat.un, lwr = fit$lwr, upp = fit$upp, 
-               lwr.s = fit$lwr.s, upp.s = fit$upp.s, lwru = fit$lwru, uppu = fit$uppu, domain = fit$domain, domain.ord = fit$domain.ord, amat = fit$amat, 
-               grid = fit$grid, grid_ps = fit$grid_ps, nd = fit$nd, Ds = fit$Ds, cov.c = fit$cov.c, cov.un = fit$cov.un, ec = fit$ec, xmat_add = xmat_add, xmat_add0 = xmat_add0, xnms_add = xnms_add, 
-               shapes_add = shapes_add, ynm = ynm, zeros_ps = fit$zeros_ps, pval = fit$pval, CIC = fit$CIC)
+                   level = level, n.mix = n.mix, cl = cl, test = test, alpha = alpha))
+  rslt <- list(design = design, data = data, muhat = fit$muhat.s, muhat.un = fit$muhat.un, 
+               lwr = fit$lwr.s, upp = fit$upp.s, lwru = fit$lwru, uppu = fit$uppu, domain = fit$domain, domain.ord = fit$domain.ord, amat = fit$amat, 
+               grid = fit$grid, grid_ps = fit$grid_ps, nd = fit$nd, Ds = fit$Ds, cov.c = fit$cov.c, cov.un = fit$cov.un, ec = fit$ec, xmat_add = xmat_add, 
+               xmat_add0 = xmat_add0, xnms_add = xnms_add, shapes_add = shapes_add, ynm = ynm, zeros_ps = fit$zeros_ps, pval = fit$pval, CIC = fit$CIC)
   rslt$call <- cl
   class(rslt) <- "csvy"
   return (rslt)
@@ -94,9 +97,12 @@ csvy <- function(formula, data, design, nD=NULL, family=gaussian, amat=NULL,
 ############
 csvy.fit = function(design, M=NULL, relaxes=NULL, xm=NULL, sh=1, ynm=NULL, nd=NULL, 
                     ID=NULL, block.ave.lst=NULL, block.ord.lst=NULL, amat=NULL, 
-                    additive=TRUE, level=0.95, n.mix=100L, cl=NULL, h_grid=NULL, test=TRUE,...){
+                    additive=TRUE, level=0.95, n.mix=100L, cl=NULL, h_grid=NULL, test=TRUE, alpha=NULL,...){
+  #wp is population wt
+  #Ds: observed domains?
   #make sure each column in xm is numeric:
   #xm = map_dbl(xm, .f = function(.x) as.numeric(.x))
+  #print (sh)
   bool = apply(xm, 2, function(x) is.numeric(x))
   if(any(!bool)){
     xm = apply(xm, 2, function(x) as.numeric(x))
@@ -104,8 +110,14 @@ csvy.fit = function(design, M=NULL, relaxes=NULL, xm=NULL, sh=1, ynm=NULL, nd=NU
   Ds = apply(xm, 2, function(x) length(unique(x)))
   xm.red = unique(xm)
   #xvs2 returns labeled domain names from 1 to max x
+  #cannot find the max domain id....
+  #experiment with parallel computing 
+  #no_of_cores = detectCores()
+  #cl = makeCluster(no_of_cores)
+  #apply is faster than parApply
   #xvs2 = apply(xm.red, 2, function(x) 1:length(unique(x)))
   xvs2 = apply(xm.red, 2, function(x) sort(unique(x)))
+  #print (xvs2)
   if(is.matrix(xvs2)){
     grid2 = expand.grid(as.data.frame(xvs2))
   }else if(is.list(xvs2)){
@@ -115,6 +127,7 @@ csvy.fit = function(design, M=NULL, relaxes=NULL, xm=NULL, sh=1, ynm=NULL, nd=NU
   ds = design
   #sample sizes for each observed domain
   if(is.null(nd)){
+    #nd = apply(grid2, 1, function(gi){sum(apply(xm, 1, function(elem) all(elem == gi)))})
     xm.df = as.data.frame(xm)
     nd = aggregate(list(nd = rep(1, nrow(xm.df))), xm.df, length)$nd
   }
@@ -128,6 +141,7 @@ csvy.fit = function(design, M=NULL, relaxes=NULL, xm=NULL, sh=1, ynm=NULL, nd=NU
       ID = apply(xm, 1, function(elem) which(apply(grid2, 1, function(gi) all(gi == elem))))
     }
   }
+  #print (ID)
   ID = as.ordered(ID)
   
   uds = unique(ID)
@@ -135,12 +149,15 @@ csvy.fit = function(design, M=NULL, relaxes=NULL, xm=NULL, sh=1, ynm=NULL, nd=NU
   uds = sort(uds)
   #new M:
   obs_cells = as.numeric(levels(uds))[uds]
+  #print (obs_cells)
   #let user to define M?
   if (is.null(M)) {
     #some x won't start from 1:
     #M = length(levels(uds))#wrong: cannot include empty cells
     M = max(obs_cells)
   }
+  #new: to be used in makeamat_2d_block
+  M_0 = M
   if (any(class(ds) == "survey.design")) {
     weights = 1/(ds$prob)
   }
@@ -160,11 +177,11 @@ csvy.fit = function(design, M=NULL, relaxes=NULL, xm=NULL, sh=1, ynm=NULL, nd=NU
     ysi = y[ps]
     wi = weights[ps]
     Nhi = sum(wi)
-    
     Nhat[udi] = Nhi
     nd[udi] = length(wi)
     ys[[udi]] = ysi
     stratawt[[udi]] = wi
+    #print(c(udi, length(wi)))
   }
   if (any(class(design) == "survey.design")) {
     rds = as.svrepdesign(ds, type="JKn")
@@ -173,6 +190,9 @@ csvy.fit = function(design, M=NULL, relaxes=NULL, xm=NULL, sh=1, ynm=NULL, nd=NU
     rds = ds
   }
   fo = as.formula(paste0("~", ynm))
+  # if (n > 1000){
+  #   m.c = TRUE
+  # } else {m.c = FALSE}
   ans.unc = svyby(formula=fo, by=~ID, design=rds, FUN=svymean, covmat=TRUE, multicore=FALSE, drop.empty.groups=FALSE)
   v1 = vcov(ans.unc)
   yvecu = yvec = ans.unc[[ynm]]
@@ -210,6 +230,7 @@ csvy.fit = function(design, M=NULL, relaxes=NULL, xm=NULL, sh=1, ynm=NULL, nd=NU
       noord_cells = noord_cells[[1]]
     }
   }
+  #print (empty_cells)
   ne = length(empty_cells)
   nd_ne = nd[empty_cells]
   #if (length(block.ave.lst) == 0 & length(block.ord.lst) == 0) {
@@ -227,11 +248,19 @@ csvy.fit = function(design, M=NULL, relaxes=NULL, xm=NULL, sh=1, ynm=NULL, nd=NU
   zeros = ones = 0
   zeros_ps = NULL
   
-  if (ne >= 1) {
+  if(ne >= 1){
+    #ignore nd == 1 now
+    #if (any(nd == 1)) {
+    #  ones_ps = which(nd == 1)
+    #  ones = length(ones_ps)
+    #  yvec_ones = yvec[which(obs_cells %in% ones_ps)]
+    #  Nhat_ones = Nhat[which(obs_cells %in% ones_ps)]
+    #} 
     if (any(nd == 0)) {
       zeros_ps = which(nd == 0)
       zeros = length(zeros_ps)
     }
+    #zeros = ne - ones
   }
   
   pskeep = ps = NULL
@@ -264,8 +293,13 @@ csvy.fit = function(design, M=NULL, relaxes=NULL, xm=NULL, sh=1, ynm=NULL, nd=NU
           #print ('a')
           block.ord = block.ord.lst[[1]]
         }
-           
+        #print (block.ord)
+        #amat = makeamat(1:M, sh=sh, Ds=M, interp=TRUE, relaxes=FALSE, block.ave=block.ave, block.ord=block.ord)
+        #ans.polar = coneA(yvec, amat, w=w)
+        #muhat = round(ans.polar$thetahat, 10)
+        
         #relaxed monotone is not fully debugged
+        #print (relaxes)
         if (relaxes) {
           #amats = makeamat(1:M, sh=sh, Ds=M, interp=TRUE, relaxes=relaxes)
           if (is.null(h_grid)) {
@@ -315,6 +349,8 @@ csvy.fit = function(design, M=NULL, relaxes=NULL, xm=NULL, sh=1, ynm=NULL, nd=NU
           #ps = max(index)
           #try the 4th largest
           ps = (sort(index, decreasing = TRUE))[4]
+          #print (index)
+          #print (ps)
           #choose amat_h 
           amat = amats[[ps]]
           hkeep = h_grid[ps]
@@ -327,31 +363,57 @@ csvy.fit = function(design, M=NULL, relaxes=NULL, xm=NULL, sh=1, ynm=NULL, nd=NU
           }
           amat = makeamat(x=M2, sh=sh, Ds=M, interp=TRUE, relaxes=FALSE, 
                           block.ave=block.ave.lst[[1]], block.ord=block.ord.lst[[1]], 
-                          zeros_ps=zeros_ps, noord_cells=noord_cells)
+                          zeros_ps=zeros_ps, noord_cells=noord_cells, xvs2=xvs2, grid2=grid2)
+          #new:
+          #if(length(zeros_ps) > 0 & sh == 9){
+          #  amat = amat[, -zeros_ps]
+          #}
           #amat = makeamat(1:M, sh=sh, Ds=M, interp=TRUE, relaxes=FALSE, block.ave=block.ave, block.ord=block.ord)
         }  
       } else if (sh == 0 & is.null(amat)) {
+        #print (sh)
         stop ("User must define a constraint matrix!")
       }
     } else if (Nd >= 2) {
       #temp:
       if (any(sh > 0)) {
         #if (!relaxes) {
-        amat = makeamat_2D(x=NULL, sh=sh, grid2=grid2, 
+        amat = makeamat_2D(x=NULL, sh=sh, grid2=grid2, xvs2=xvs2,
                            zeros_ps=zeros_ps, noord_cells=noord_cells, 
                            Ds=Ds, interp=TRUE, 
                            block.ave.lst=block.ave.lst,
-                           block.ord.lst=block.ord.lst)
+                           block.ord.lst=block.ord.lst, M_0=M_0)
+        #to be used in impute_2 or impute_3
+        amat_0 = makeamat_2D(x=NULL, sh=sh, grid2=grid2, xvs2=xvs2,
+                             zeros_ps=NULL, noord_cells=noord_cells, 
+                             Ds=Ds, interp=TRUE, 
+                             block.ave.lst=block.ave.lst,
+                             block.ord.lst=block.ord.lst, M_0=M_0)
       } else if (all(sh == 0) & is.null(amat)) {
         stop ("User must define a constraint matrix!")
       }
+      #temp:
+      #if (!is.null(zeros_ps)) {
+      #  amat = amat[, -zeros_ps, drop=FALSE]
+      #}
+      #} else {
+      #   n_h = 60
+      #   amats = vector("list", length = n_h)
+      #   h_grid = seq(0.01, 6, length = n_h)
+      #   for (h in h_grid) {
+      #     amat = makeamat_2D(x=NULL, sh=sh, Ds=Ds, interp=TRUE, relaxes=relaxes, h=h) 
+      #     amats[[h]] = amat
+      #   }
+      # }
     }
   }
   
-  #if (Nd >= 2 || (Nd == 1 & sh == 0 & !is.null(amat))) {
+  #new: check irreducibility of amat
+  
   if (!is.null(amat)) {
     ans.polar = coneA(yvec, amat, w=w, msg=FALSE)
     muhat = round(ans.polar$thetahat, 10)
+    #print (muhat[,1])
     face = ans.polar$face
     if (length(face) == 0){
       mat = wt %*% v1
@@ -365,7 +427,7 @@ csvy.fit = function(design, M=NULL, relaxes=NULL, xm=NULL, sh=1, ynm=NULL, nd=NU
     CIC = t(evec) %*% wt %*% evec + 2*(sum(diag(mat)))
     CIC = as.numeric(CIC)
   }
-  
+  #print(dim(muhat))
   lwr = upp = NULL
   acov = v1
   dp = -t(amat)
@@ -382,12 +444,24 @@ csvy.fit = function(design, M=NULL, relaxes=NULL, xm=NULL, sh=1, ynm=NULL, nd=NU
     obs = 1:M
     
     #not finished: v1_tmp
+    #if (!is.null(zeros_ps) & Nd >= 2) {
+    #  v1_tmp = matrix(0, nrow = M_0, ncol = M_0)
+    #  v1_tmp[-zeros_ps,-zeros_ps] = v1
+    #  ysims = MASS::mvrnorm(n.mix, mu=muhat, Sigma=v1_tmp)
+    #} else {
     ysims = MASS::mvrnorm(n.mix, mu=muhat, Sigma=v1)
+    #}
     for (iloop in 1:n.mix) {
       #ysim is the group mean
       #new:
       ysim = ysims[iloop, ]
+      
+      #temp
+      #if (!is.null(zeros_ps) & Nd >= 2) {
+      #  ansi = coneA(ysim, amat, w=w_0) 
+      #} else {
       ansi = coneA(ysim, amat, w=w, msg=FALSE)
+      #}
       muhati = round(ansi$thetahat, 10)
       
       facei = ansi$face
@@ -424,41 +498,105 @@ csvy.fit = function(design, M=NULL, relaxes=NULL, xm=NULL, sh=1, ynm=NULL, nd=NU
       bsec = df.face
       bsec[,2] = bsec[,2] / sum(bsec[,2])
       
+      #temp
+      # if (!is.null(zeros_ps) & Nd >= 2) {
+      #   acov = matrix(0, nrow=M_0, ncol=M_0)
+      #   wtinv_vec = 1/w
+      #   #wtinv_vec[zeros_ps] = 1e-3
+      #   wtinv = diag(wtinv_vec)
+      #   imat = diag(M_0)
+      #   
+      #   for(is in 1:nsec) {
+      #     if (bsec[is,2] > 0) {
+      #       jvec = sector[is, ]
+      #       smat = dp[,which(jvec==1),drop=FALSE]
+      #       wtinvs = wtinv %*% smat
+      #       pmat_is_p = wtinvs %*% solve(crossprod(smat, wtinvs)) %*% t(smat)
+      #       pmat_is = (imat-pmat_is_p)
+      #       #}
+      #       acov = acov + bsec[is,2]*pmat_is%*%v1_tmp%*%t(pmat_is)
+      #     }
+      #   }
+      # } else {
       acov = matrix(0, nrow=M, ncol=M)
       
       for(is in 1:nsec) {
+        #if (bsec[is,2] > 0) {
         jvec = sector[is, ]
+        #if (sum(jvec) == 0) {
+        #  pmat_is = imat
+        #} else {
         smat = dp[,which(jvec==1),drop=FALSE]
+        #print (t(smat))
         wtinvs = wtinv %*% smat
         pmat_is_p = wtinv %*% smat %*% solve(t(smat) %*% wtinv %*% smat) %*% t(smat)
+        #pmat_is_p = wtinvs %*% solve(crossprod(smat, wtinvs)) %*% t(smat)
         pmat_is = (imat-pmat_is_p)
+        #}
         acov = acov + bsec[is,2]*pmat_is%*%v1%*%t(pmat_is)
+        #}
       }
+      #}
     } else {
+      #if (n.mix >= 1 & det(v1) < -1e-10) {
+      #  warning("'Sigma' is not positive definite and simulations cannot be done!")
+      #}
       acov = v1
     }
-    z.mult = qnorm((1 - level)/2, lower.tail=FALSE)
-    #z.mult = 2
+    #z.mult = qnorm((1 - level)/2, lower.tail=FALSE)
+    z.mult = 2
+    # #temp
+    # if (!is.null(zeros_ps) & Nd >= 2) {
+    #   vsc = diag(acov)
+    #   hl = z.mult*sqrt(vsc)
+    # 
+    #   lwr = muhat_tmp - hl
+    #   upp = muhat_tmp + hl
+    #   lwr = lwr[-zeros_ps]
+    #   upp = upp[-zeros_ps]
+    #   
+    #   vsc = vsc[-zeros_ps]
+    #   hl = hl[-zeros_ps]
+    #   #muhat = muhat[-zeros_ps]
+    #   yvec = yvec[-zeros_ps]
+    #   w = w[-zeros_ps]
+    #   
+    # } else {
     vsc = diag(acov)
     hl = z.mult*sqrt(vsc)
     lwr = muhat - hl
     upp = muhat + hl
+    #}
   }
+  # if (n.mix >= 1 & det(v1) <= 1e-30) {
+  #   #warning("'Sigma' is not positive definite and simulations cannot be done!")
+  #   acov = v1
+  #   #z.mult = qnorm((1 - level)/2, lower.tail=FALSE)
+  #   z.mult = 2
+  #   vsc = diag(acov)
+  #   hl = z.mult*sqrt(vsc)
+  #   lwr = muhat - hl
+  #   upp = muhat + hl
+  # }
   #new: if n.mix = 0, then use the faces for the final projection of the real y
   if (n.mix == 0L) {
     vmat = qr.Q(qr(t(amat)), complete = TRUE)[, -(1:(qr(t(amat))$rank)), drop = FALSE]
     pmat_is = vmat %*% solve(crossprod(vmat), t(vmat))
     acov = wtinv^(.5)%*%pmat_is%*%wt^(.5)%*%v1%*%wt^(.5)%*%pmat_is%*%wtinv^(.5)
-    z.mult = qnorm((1 - level)/2, lower.tail=FALSE)
-    #z.mult = 2
+    #z.mult = qnorm((1 - level)/2, lower.tail=FALSE)
+    z.mult = 2
     vsc = diag(acov)
     hl = z.mult*sqrt(vsc)
     lwr = muhat - hl
     upp = muhat + hl
   }
   muhatu = yvecu
-  z.mult = qnorm((1 - level)/2, lower.tail=FALSE)
-  #z.mult = 2
+  #if (length(empty_cells) >= 1) {
+  #if (zeros >= 1) {
+  #  muhatu = muhatu[-zeros]
+  #}
+  #z.mult = qnorm((1 - level)/2, lower.tail=FALSE)
+  z.mult = 2
   hl = z.mult*sqrt(vsu)
   lwru = muhatu - hl
   uppu = muhatu + hl
@@ -478,6 +616,7 @@ csvy.fit = function(design, M=NULL, relaxes=NULL, xm=NULL, sh=1, ynm=NULL, nd=NU
   uppu = uppu_all
   
   #for monotone only: to find the c.i. for empty/1 cells by using smallest L and largest U of neighbors
+  #print (domain.ord)
   #new: create grid2 again because the routines to do imputation need to have each x start from 1
   xvs2 = apply(xm.red, 2, function(x) 1:length(unique(x)))
   if(is.matrix(xvs2)){
@@ -486,33 +625,39 @@ csvy.fit = function(design, M=NULL, relaxes=NULL, xm=NULL, sh=1, ynm=NULL, nd=NU
     grid2 = expand.grid(xvs2)
   }
   if (ne >= 1) {
+    #print (ne)
     ans_im = impute_em2(empty_cells, obs_cells, M=(M+zeros), yvec, Nd, nd, Nhat, w, 
-                        domain.ord, grid2, Ds, sh, muhat, lwr, upp, vsc)
+                        domain.ord, grid2, Ds, sh, muhat, lwr, upp, vsc, amat_0)
     muhat = ans_im$muhat
     lwr = ans_im$lwr
     upp = ans_im$upp
     vsc = ans_im$vsc
     domain.ord = ans_im$domain.ord
   }
-
+  
   sig1 = vsc
   sig2 = NULL
   if (Nd >= 1 & nsm >= 1) {
     new_obs_cells = sort(unique(c(empty_cells, obs_cells)))
     if(Nd == 1){
       ans_im2 = impute_em2(small_cells, new_obs_cells, M=(M+zeros), yvec, 
-                           Nd, nd, Nhat, w, domain.ord, grid2, Ds, sh, muhat, lwr, upp, vsc)
+                           Nd, nd, Nhat, w, domain.ord, grid2, Ds, sh, muhat, lwr, upp, vsc, amat_0)
+      #lwr = ans_im2$lwr
+      #upp = ans_im2$upp
+      sig2 = ans_im2$vsc
     }
+    #if(Nd >= 2 & any(nd > 10)){
     if(Nd >= 2){
       ans_im2 = impute_em3(small_cells, M=(M+zeros), yvec, Nd, nd, Nhat, w, domain.ord,
-                           grid2, Ds, sh, muhat, lwr, upp, vsc, new_obs_cells)
+                           grid2, Ds, sh, muhat, lwr, upp, vsc, new_obs_cells, amat_0)
+      sig2 = ans_im2$vsc
     }
-    lwr = ans_im2$lwr
-    upp = ans_im2$upp
-    sig2 = ans_im2$vsc
+    #muhat = ans_im$muhat
+    #domain.ord = ans_im$domain.ord
   }
   
   vsc_mix = sig1
+  vsc_mix_imp = NULL
   if (Nd >= 1 & nsm >= 1) {
     imp_ps = sort(c(zeros_ps, small_cells))
     nd_imp_ps = nd[imp_ps]
@@ -522,80 +667,104 @@ csvy.fit = function(design, M=NULL, relaxes=NULL, xm=NULL, sh=1, ynm=NULL, nd=NU
     sig2_imp = sig2[imp_ps]
     
     vsc_mix_imp = 1:l_imp_ps*0
+    #tmp:
+    if(Nd > 1){
+      nbors_lst_0 = fn_nbors_2(small_cells, amat_0, muhat)
+    }
+    
+    k_sm = 1 
     for(k in 1:l_imp_ps){
       ndek = nd_imp_ps[k]
       s1k = sig1_imp[k]
       s2k = sig2_imp[k]
-      if(ndek == 0){
+      #tmp
+      if(Nd > 1 & ndek > 0){
+        max_ps = nbors_lst_0$nb_lst_maxs[[k_sm]]
+        min_ps = nbors_lst_0$nb_lst_mins[[k_sm]]
+        #max_ps = min_ps = NULL
+        if(length(max_ps)>0){
+          mu_max = muhat[max_ps]
+        }
+        if(length(min_ps)>0){
+          mu_min = muhat[min_ps]
+        } 
+        k_sm = k_sm + 1
+      } else if (Nd == 1 | ndek == 0) {
+        min_ps = max_ps = 1
+      }
+      
+      #when min_ps or max_ps = NULL: kth cell is in a 2D case, small cell, at the edge of the 
+      #grid and there is only one constraint in amat
+      if(length(min_ps) == 0 | length(max_ps) == 0) {
         varek = s1k
-      } else if (ndek == 1) {
-        varek = s1k*.2 + s2k*.8
-      } else if(ndek == 2 | ndek == 3){
-        varek = s1k*.3 + s2k*.7
-      }else if(ndek == 4 | ndek == 5){
-        varek = s1k*.6 + s2k*.4
-      }else if(ndek == 6 | ndek == 7){
-        varek = s1k*.6 + s2k*.4
-      }else if(ndek == 8 | ndek == 9){
-        varek = s1k*1 + s2k*0
-      }else if(ndek == 10){
-        varek = s1k*.8 + s2k*.2
+      } else {
+        if(!is.null(alpha)){
+          if(0 <= alpha & 1 >= alpha){
+            varek = s1k*alpha + s2k*(1-alpha)
+          }else{
+            warning("alpha must be between 0 and 1!")
+          }
+        }else{
+          if(ndek == 0){
+            #varek = s1k
+            varek = s2k
+          } else if (ndek == 1) {
+            varek = s1k*.2 + s2k*.8
+          } else if(ndek == 2 | ndek == 3){
+            varek = s1k*.3 + s2k*.7
+          }else if(ndek == 4 | ndek == 5){
+            varek = s1k*.6 + s2k*.4
+          }else if(ndek == 6 | ndek == 7){
+            varek = s1k*.6 + s2k*.4
+          }else if(ndek == 8 | ndek == 9 | ndek == 10){
+            varek = s1k*.8 + s2k*.2
+          }
+        }
       }
       vsc_mix_imp[k] = varek 
     }
-    
     vsc_mix[imp_ps] = vsc_mix_imp
   }
   hl = z.mult*sqrt(vsc_mix)
   lwr = muhat - hl
   upp = muhat + hl
-
+  
   #new: test of H_0: theta in V and H_1: theta in C
   #do lsq fit with Atheta = 0 to get fit under H0
   #use the 1st option to compute T1 and T2
+  pval = NULL
   if(test){
-    #m = nrow(amat)
     m = qr(amat)$rank
-    umat = chol(v1)
-    uinv = ginv(umat)
-    vmat = qr.Q(qr(t(amat)), complete = TRUE)[, -(1:(qr(t(amat))$rank)), drop = FALSE]
-    #if(ncol(vmat>0)){
-    #  pvmat = vmat %*% solve(crossprod(vmat), t(vmat))
-    #}
-    #imat = diag(M)
-    
-    #1st option
+    #vmat = qr.Q(qr(t(amat)), complete = TRUE)[, -(1:(qr(t(amat))$rank)), drop = FALSE]
     vec = amat %*% yvecu
-    aumat = amat %*% t(umat)
-    auinv = ginv(aumat)
-    vec2 = auinv %*% vec 
-    T1_hat = t(vec2) %*% vec2
-    #T1_hat = t(yvecu) %*% t(amat) %*% ginv(amat %*% v1 %*% t(amat)) %*% amat %*% yvecu
-    #2nd option (works ok...)
-    #if(ncol(vmat>0)){
-    #  T1_hat =  t(yvecu) %*% t(imat - pvmat) %*% uinv %*% t(uinv) %*% (imat - pvmat) %*% yvecu
-    #}else{
-    #  T1_hat =  t(yvecu) %*% uinv %*% t(uinv) %*% yvecu
-    #}
+    T1_hat = t(vec) %*% ginv(amat %*% v1 %*% t(amat)) %*% vec
+    #T1_hat = t(vec) %*% solve(amat %*% v1 %*% t(amat)) %*% vec
     
     eans = eigen(v1, symmetric=TRUE)
-    evecs = eans$vectors
+    evecs = eans$vectors; evecs = round(evecs, 8)
+    #new: change negative eigenvalues to be a small positive value
     evals = eans$values
-    Z_s = uinv %*% yvecu
+    sm = 1e-7
+    
+    #neg_ps = which(evals < sm)
+    #if(length(neg_ps) > 0){
+    #  evals[neg_ps] = sm
+    #}
     L = evecs %*% diag(sqrt(evals))
-    #Linv = solve(L)
-    Linv = ginv(L)
+    Linv = ginv(L) #give weird T2 when v1 is singular
+    Linv = solve(L)
     atil = amat %*% L
     Z_s = Linv %*% yvecu
+    
+    #umat = chol(v1) #not work if v1 is singular
+    #uinv = solve(umat)
+    #atil = amat %*% umat 
+    #Z_s = uinv %*% yvecu
     
     theta_hat = coneA(Z_s, atil, msg=FALSE)$thetahat
     T2_hat = t(Z_s-theta_hat) %*% (Z_s-theta_hat)
     
-    #atil = amat %*% umat 
-    #2nd option (works ok...)
-    #T2_hat = t(yvecu - muhat) %*% uinv %*% t(uinv) %*% (yvecu - muhat) 
     bval = (T1_hat-T2_hat)/T1_hat
-    sm = 1e-8
     
     if (bval > sm) {
       nloop = 100
@@ -612,23 +781,21 @@ csvy.fit = function(design, M=NULL, relaxes=NULL, xm=NULL, sh=1, ynm=NULL, nd=NU
         mdist[i] = length(which(J_length == (i-1)))
       }
       mdist = mdist/nloop
-      
-      d0 = qr(vmat)$rank
-      d = m-d0
-      pval = 1 - sum(c(0, pbeta(bval, d:1/2, 1:d/2), 1)*mdist[1:(d+2)])
-   } else {pval = 1}
+      pval = 1 - sum(pbeta(bval, m:0/2, 0:m/2)*mdist)
+    } else {pval = 1}
   }
+  #print (pval)
+  ID = as.numeric(levels(ID))[ID] 
   ans = list(muhat = muhat[domain.ord], muhat.s = muhat, muhat.un = muhatu, 
              lwr = lwr[domain.ord], upp = upp[domain.ord], lwr.s = lwr, 
              upp.s = upp, lwru = lwru, uppu = uppu, domain = ID, 
              grid_ps = pskeep, amat = amat, Ds = Ds, domain.ord = domain.ord, 
-             nd = nd, grid = grid, cov.un = vcov(ans.unc), cov.c = vsc_mix,
-             ec = empty_cells, hkeep = hkeep, h_grid = h_grid, zeros_ps=zeros_ps, pval=pval, CIC=CIC)
+             nd = nd, grid = grid2, cov.un = vcov(ans.unc), cov.c = vsc_mix,
+             ec = empty_cells, hkeep = hkeep, h_grid = h_grid, zeros_ps=zeros_ps, 
+             pval=pval, CIC=CIC)
   class(ans) = "csvy"
-  invisible(ans)
-  #return (ans)
+  return (ans)
 }
-
 
 ####################################
 #apply plotpersp on a csvy.fit object
@@ -636,6 +803,8 @@ csvy.fit = function(design, M=NULL, relaxes=NULL, xm=NULL, sh=1, ynm=NULL, nd=NU
 plotpersp <- function(object, x1 = NULL, x2 = NULL,...) {
   x1nm <- deparse(substitute(x1))
   x2nm <- deparse(substitute(x2))
+  #print (x1nm)
+  #print (x2nm)
   if (inherits(object, "cgamp")) {
     xnms_add <- object$object$xnms_add
   } else { #cgam and csvy
@@ -652,8 +821,11 @@ plotpersp <- function(object, x1 = NULL, x2 = NULL,...) {
     xnms_tri <- object$xnms_tri
   }
   is_add <- all(c(any(grepl(x1nm, xnms_add, fixed = TRUE)), any(grepl(x2nm, xnms_add, fixed = TRUE))))
+  #print (is_add)
   is_wps <- all(c(any(grepl(x1nm, xnms_wp, fixed = TRUE)), any(grepl(x2nm, xnms_wp, fixed = TRUE))))
+  #print (is_wps)
   is_tri <- all(c(any(grepl(x1nm, xnms_tri, fixed = TRUE)), any(grepl(x2nm, xnms_tri, fixed = TRUE))))
+  #print (is_tri)
   if (missing(x1) | missing(x2)) {
     UseMethod("plotpersp")
   } else {
@@ -661,14 +833,44 @@ plotpersp <- function(object, x1 = NULL, x2 = NULL,...) {
     if (length(cs) == 1 & is.null(x1nm) & is.null(x2nm)) {
       UseMethod("plotpersp")
     } else {
+      #if (is_wps) {
+      #print (x1)
+      #print (x2nm)
+      #  if (inherits(object, "wpsp")) {
+      #print (x1nm)
+      #print (x2nm)
+      #print (head(x1))
+      #    plotpersp.wpsp(object, x1, x2, x1nm, x2nm,...)
+      #  } else {
+      #    plotpersp.wps(object, x1, x2, x1nm, x2nm,...)
+      #  }
+      #} else if (is_add) {
+      #  if (inherits(object, "cgamp")){
+      #    plotpersp.cgamp(object, x1, x2, x1nm, x2nm,...)
+      #  } else if (inherits(object, "cgam")){
+      #    plotpersp.cgam(object, x1, x2, x1nm, x2nm,...)
+      #  } else if (inherits(object, "csvy")){
       plotpersp.csvy(object, x1, x2, x1nm, x2nm,...)
+      #  }
+      #} else if (is_tri) {
+      #  if (inherits(object, "trisplp")) {
+      #    plotpersp.trisplp(object, x1, x2, x1nm, x2nm,...)
+      #  } else {
+      #    plotpersp.trispl(object, x1, x2, x1nm, x2nm,...)
+      #  }
+      #} else {
+      #  stop ("Nonparametric components must be from the same class!")
+      #}
     }
   }
 }
 
 ####################################
-plotpersp.csvy = function(object, x1=NULL, x2=NULL, x1nm=NULL, x2nm=NULL, data=NULL, ci="none", transpose=FALSE, main=NULL, categ=NULL, col="white", cex.main=.8, xlab=NULL, 
-                          ylab=NULL, zlab=NULL, zlim=NULL, box=TRUE, axes=TRUE, th=NULL, ltheta=NULL, ticktype="detailed", NCOL=NULL,...) {
+plotpersp.csvy = function(object, x1=NULL, x2=NULL, x1nm=NULL, x2nm=NULL, data=NULL, ci="none",
+                          transpose=FALSE, main=NULL, categ=NULL, categnm=NULL, 
+                          col="white", cex.main=.8, xlab=NULL, 
+                          ylab=NULL, zlab=NULL, zlim=NULL, box=TRUE,
+                          axes=TRUE, th=NULL, ltheta=NULL, ticktype="detailed", nticks=5, palette=NULL, NCOL=NULL,...) {
   if (!inherits(object, "csvy")) {
     warning("calling plotpersp(<fake-csvy-object>) ...")
   }
@@ -684,9 +886,12 @@ plotpersp.csvy = function(object, x1=NULL, x2=NULL, x1nm=NULL, x2nm=NULL, data=N
   col.upp = t_col("green", perc = 90, name = "lt.green")
   col.lwr = t_col("pink", perc = 80, name = "lt.pink")
   Ds = object$Ds
-  muhat = object$muhat.s
-  lwr = object$lwr.s
-  upp = object$upp.s
+  #muhat = object$muhat.s
+  #lwr = object$lwr.s
+  #upp = object$upp.s
+  muhat = object$muhat
+  lwr = object$lwr
+  upp = object$upp
   xnms = object$xnms_add
   xmat = object$xmat_add
   bool = apply(xmat, 2, function(x) is.numeric(x))
@@ -702,7 +907,7 @@ plotpersp.csvy = function(object, x1=NULL, x2=NULL, x1nm=NULL, x2nm=NULL, data=N
   ynm = object$ynm
   dm = object$domain
   #new: to avoid empty cell
-  dm = as.numeric(levels(dm))[dm]
+  #dm = as.numeric(levels(dm))[dm]
   nd = object$nd
   ec = object$ec
   data = object$data
@@ -972,15 +1177,15 @@ plotpersp.csvy = function(object, x1=NULL, x2=NULL, x1nm=NULL, x2nm=NULL, data=N
     oldpar <- par(no.readonly = TRUE)  
     on.exit(par(oldpar))    
     if (ci == "none") {
-      persp(x1p, x2p, surf1, zlim = zlim0, col=col, xlab = xlab, ylab = ylab, zlab = zlab, main = main, theta = ang, ltheta = -135, ticktype = ticktype, box=box, axes=axes)
+      persp(x1p, x2p, surf1, zlim = zlim0, col=col, xlab = xlab, ylab = ylab, zlab = zlab, main = main, theta = ang, ltheta = -135, ticktype = ticktype, box=box, axes=axes, nticks=nticks)
       par(new=FALSE)
     } else if (ci == 'up') {
-      persp(x1p, x2p, surf1, zlim = zlim0, col=col, xlab = xlab, ylab = ylab, zlab = zlab, main = main, theta = ang, ltheta = -135, ticktype = ticktype, box=box, axes=axes)
+      persp(x1p, x2p, surf1, zlim = zlim0, col=col, xlab = xlab, ylab = ylab, zlab = zlab, main = main, theta = ang, ltheta = -135, ticktype = ticktype, box=box, axes=axes, nticks=nticks)
       par(new = TRUE)
       persp(x1p, x2p, surf2, zlim = zlim0, col=col.upp, theta = ang, box=FALSE, axes=FALSE)
       par(new=FALSE)
     } else if (ci == 'lwr') {
-      persp(x1p, x2p, surf1, zlim = zlim0, col=col, xlab = xlab, ylab = ylab, zlab = zlab, main = main, theta = ang, ltheta = -135, ticktype = ticktype, box=box, axes=axes)
+      persp(x1p, x2p, surf1, zlim = zlim0, col=col, xlab = xlab, ylab = ylab, zlab = zlab, main = main, theta = ang, ltheta = -135, ticktype = ticktype, box=box, axes=axes, nticks=nticks)
       par(new = TRUE)
       persp(x1p, x2p, surf3, zlim = zlim0, col=col.lwr, theta = ang, box=FALSE, axes=FALSE)
       par(new=FALSE)
@@ -989,7 +1194,11 @@ plotpersp.csvy = function(object, x1=NULL, x2=NULL, x1nm=NULL, x2nm=NULL, data=N
     #new: some x won't start from 1
     ux1 = sort(unique(x1))
     ux2 = sort(unique(x2))
-    palette = c("peachpuff", "lightblue", "limegreen", "grey", "wheat", "yellowgreen", "seagreen1", "palegreen", "azure", "whitesmoke")
+    if(is.null(palette)){
+      palette = c("peachpuff", "lightblue", "limegreen", "grey", "wheat", "yellowgreen", 
+                  "seagreen1", "palegreen", "azure", "whitesmoke")
+    }
+    #palette = scales::hue_pal(h = c(275, 360))(40)
     ks = length(surfs)
     if (ks > 1 && ks < 11) {
       col = palette[1:ks]
@@ -1052,7 +1261,21 @@ plotpersp.csvy = function(object, x1=NULL, x2=NULL, x1nm=NULL, x2nm=NULL, data=N
       #  box = FALSE
       #  axes = FALSE
       #}
-      persp(x1p, x2p, surf1, zlim = zlim0, col=col[i], xlab = xlab, ylab = ylab, zlab = zlab, main = paste0(x3nmi, " = ", ux3i0[i]), theta = ang, ltheta = -135, ticktype = ticktype, box=box, axes=axes)
+      if(is.null(categnm)){
+        persp(x1p, x2p, surf1, zlim = zlim0, col=col[i], xlab = xlab,
+              ylab = ylab, zlab = zlab, main = paste0(x3nmi, " = ", ux3i0[i]), 
+              theta = ang, ltheta = -135, ticktype = ticktype, box=box, axes=axes, nticks=nticks)
+      }else{
+        if(length(categnm) == ks){
+          persp(x1p, x2p, surf1, zlim = zlim0, col=col[i], xlab = xlab,
+                ylab = ylab, zlab = zlab, main = categnm[i], 
+                theta = ang, ltheta = -135, ticktype = ticktype, box=box, axes=axes, nticks=nticks)
+        } else if (length(categnm) == 1) {
+          persp(x1p, x2p, surf1, zlim = zlim0, col=col[i], xlab = xlab,
+                ylab = ylab, zlab = zlab, main = paste0(categnm, " = ", ux3i0[i]), 
+                theta = ang, ltheta = -135, ticktype = ticktype, box=box, axes=axes, nticks=nticks)
+        }
+      }
       #par(new = TRUE)
     }
     par(new=FALSE)
@@ -1309,7 +1532,8 @@ fitted.csvy <- function(object,...) {
 ######
 makeamat = function(x, sh, Ds = NULL, suppre = FALSE, interp = FALSE, 
                     relaxes = FALSE, h = NULL, block.ave = NULL, 
-                    block.ord = NULL, zeros_ps = NULL, noord_cells = NULL) {
+                    block.ord = NULL, zeros_ps = NULL, noord_cells = NULL,
+                    D_index = 1, xvs2 = NULL, grid2 = NULL) {
   n = length(x)
   xu = sort(unique(x))
   n1 = length(xu)
@@ -1325,6 +1549,7 @@ makeamat = function(x, sh, Ds = NULL, suppre = FALSE, interp = FALSE,
     for(k in 1:(M-1)){
       amat[k, ] = exp(-abs(l-(k+1))/h)/sum(exp(-abs(d-(k+1))/h))-exp(-abs(l-k)/h)/sum(exp(-abs(d-k)/h))
     }
+    #print (amat)
     # return (amat)
   } else {
     #block.ave and block.ord = -1 if sh is between 1 and 9
@@ -1380,10 +1605,13 @@ makeamat = function(x, sh, Ds = NULL, suppre = FALSE, interp = FALSE,
     } else if (all(block.ave == -1) & (length(block.ord) > 1)) {
       #nbcks is the total number of blocks
       block.ord_nz = block.ord
-      
       noord_ps = which(block.ord == 0)
+      
+      #if(ncol(grid2) == 1){
       rm_id = unique(sort(c(zeros_ps, noord_ps)))
-      #rm_id = unique(sort(c(zeros_ps, noord_cells)))
+      #} else {
+      #  rm_id = unique(sort(noord_ps))
+      #}
       if(length(rm_id)>0){
         block.ord_nz = block.ord[-rm_id]
       }
@@ -1394,11 +1622,24 @@ makeamat = function(x, sh, Ds = NULL, suppre = FALSE, interp = FALSE,
       
       nbcks = length(table(block.ord_nz))
       szs = as.vector(table(block.ord_nz))
-      #bck_lst = f_ecl(x, nbcks, szs)
-      ubck = unique(block.ord_nz)
-      #use values in block.ord as an ordered integer vector
-      ubck = sort(ubck)
       
+      #new:
+      if(is.list(xvs2)){
+        ps = sapply(xvs2[[D_index]], function(.x) which(grid2[, D_index] %in% .x)[1])
+      }else if(is.matrix(xvs2)){
+        #D_index=1
+        #ps = lapply(xvs2, function(.x) which(as.vector(grid2) %in% .x)[1])
+        #ps = as.matrix(grid2)
+        #test! wrong to use x
+        ps = 1:M
+      }
+      
+      #if(length(noord_ps) > 0){
+      #  ps = ps[-noord_ps]
+      #}
+      if(length(rm_id) > 0){
+        ps = ps[-rm_id]
+      }
       #amat dimension: l1*l2...*lk by M
       amat = NULL
       for(i in 1:(nbcks-1)) {
@@ -1411,41 +1652,62 @@ makeamat = function(x, sh, Ds = NULL, suppre = FALSE, interp = FALSE,
         l1 = length(bck_1)
         l2 = length(bck_2)
         
+        #ps_bck1 = ps[which(block.ord_nz == ubck1)]
+        #ps_bck2 = ps[which(block.ord_nz == ubck2)]
         #nr = l1*l2; nc = M
         #for each element in block1, the value for each element in block 2 will be the same
         #for each element in block1, the number of comparisons is l2
         amat_bcki = NULL
-        #rm_l = length(zeros_ps) + length(noord_cells)
-        rm_l = length(zeros_ps) + length(noord_ps)
+        rm_l = length(zeros_ps) + length(noord_cells)
+        #rm_l = length(zeros_ps) 
+        #rm_l = 0
+        #test more
+        #l_noord_ps = length(which(grid2[, D_index] %in% noord_ps))
+        #rm_l = length(zeros_ps) + l_noord_ps
+        
+        #tmp:
+        #if(D_index == 1){
+        #  M.ord = length(block.ord)
+        #}else{
+        #M.ord = nc2
+        #  M.ord = nrow(grid2)
+        #}
         M.ord = length(block.ord)
+        
+        #amatj = matrix(0, nrow = l2, ncol = M.ord)
         amatj = matrix(0, nrow = l2, ncol = M.ord-rm_l)
         bck_1k = bck_1[1]
+        #bck_1k = ps_bck1[1]
         amatj[, bck_1k] = -1
         row_pointer = 1
         for(j in 1:l2){
           bck_2j = bck_2[j]
+          #bck_2j = ps_bck2[j]
           amatj[row_pointer, bck_2j] = 1
           row_pointer = row_pointer + 1
         }
         amatj0 = amatj
         amat_bcki = rbind(amat_bcki, amatj)
         
-        for(k in 2:l1) {
-          bck_1k = bck_1[k]; bck_1k0 = bck_1[k-1]
-          amatj = amatj0
-          #set the value for the kth element in block 1 to be -1
-          #set the value for the (k-1)th element in block 1 back to 0
-          #keep the values for block 2
-          amatj[, bck_1k] = -1; amatj[, bck_1k0] = 0
-          amatj0 = amatj
-          amat_bcki = rbind(amat_bcki, amatj)
+        if(l1 >= 2){
+          for(k in 2:l1) {
+            bck_1k = bck_1[k]; bck_1k0 = bck_1[k-1]
+            #bck_1k = ps_bck1[k]; bck_1k0 = ps_bck1[k-1]
+            amatj = amatj0
+            #set the value for the kth element in block 1 to be -1
+            #set the value for the (k-1)th element in block 1 back to 0
+            #keep the values for block 2
+            amatj[, bck_1k] = -1; amatj[, bck_1k0] = 0
+            amatj0 = amatj
+            amat_bcki = rbind(amat_bcki, amatj)
+          }
         }
         amat = rbind(amat, amat_bcki)
       }
       
-      if(length(noord_ps)>0){
+      if(length(noord_cells)>0){
         nr = nrow(amat); nc = ncol(amat)
-        amat_tmp = matrix(0, nrow = nr, ncol = (M.ord-rm_l+length(noord_ps)))
+        amat_tmp = matrix(0, nrow = nr, ncol = (M.ord-rm_l+length(noord_cells)))
         if(length(zeros_ps) > 0){
           ps = which(block.ord[-zeros_ps] != 0)
         }else{
@@ -1454,7 +1716,6 @@ makeamat = function(x, sh, Ds = NULL, suppre = FALSE, interp = FALSE,
         amat_tmp[, ps] = amat
         amat = amat_tmp
       }
-      #print (amat[,1])
       return (amat)
     } else if ((length(block.ave) > 1) & all(block.ord == -1)) {
       block.ave_nz = block.ave
@@ -1466,7 +1727,14 @@ makeamat = function(x, sh, Ds = NULL, suppre = FALSE, interp = FALSE,
       if(length(rm_id)>0){
         block.ave_nz = block.ave[-rm_id]
       }
-
+      #if(length(zeros_ps)>0){
+      #  block.ave_nz = block.ave[-zeros_ps]
+      #}
+      
+      #if(length(noord_cells)>0){
+      #  block.ave_nz = block.ave_nz[-noord_cells]
+      #}
+      
       ubck = unique(block.ave_nz)
       #use values in block.ord as an ordered integer vector
       ubck = sort(ubck)
@@ -1484,6 +1752,8 @@ makeamat = function(x, sh, Ds = NULL, suppre = FALSE, interp = FALSE,
         ps2 = which(block.ave_nz == ubck2)
         sz1 = length(ps1)
         sz2 = length(ps2)
+        #print (sz1)
+        #print (sz2)
         amat[i, ps1] = -1/sz1
         amat[i, ps2] = 1/sz2
       }
@@ -1509,9 +1779,12 @@ makeamat = function(x, sh, Ds = NULL, suppre = FALSE, interp = FALSE,
 ######
 #>=2D
 ######
-makeamat_2D = function(x=NULL, sh, grid2=NULL, zeros_ps=NULL, noord_cells=NULL,
+makeamat_2D = function(x=NULL, sh, grid2=NULL, xvs2=NULL, zeros_ps=NULL, noord_cells=NULL,
                        Ds = NULL, suppre = FALSE, interp = FALSE, 
-                       relaxes = FALSE, block.ave.lst = NULL, block.ord.lst = NULL) {
+                       relaxes = FALSE, block.ave.lst = NULL, block.ord.lst = NULL, M_0 = NULL) {
+  #n = length(x)
+  #xu = sort(unique(x))
+  #n1 = length(xu)
   sm = 1e-7
   ms = NULL
   Nd = length(Ds)
@@ -1521,80 +1794,101 @@ makeamat_2D = function(x=NULL, sh, grid2=NULL, zeros_ps=NULL, noord_cells=NULL,
       D1 = Ds[1]
       D2 = Ds[2]
       obs = 1:(D1*D2)
-      if (sh[1] < 9) {
-        if (length(zeros_ps) > 0) {
-          amat0_lst = list()
-          grid3 = grid2[-zeros_ps, ,drop=FALSE]
-          row_id = as.numeric(rownames(grid3))
-          cts = row_id[which(row_id%%D1 == 0)]
-          #temp: check if zeros_ps contains some point %% D1 = 0
-          if (any((zeros_ps %% D1) == 0)) {
-            zeros_ps_at_cts = zeros_ps[which((zeros_ps %% D1) == 0)]
-            cts_add = row_id[sapply(zeros_ps_at_cts, function(elem) max(which(row_id < elem)))]
-            cts = sort(c(cts, cts_add))
+      #new: group sh = 9 | 10 with other shapes
+      if (sh[1] <= 10) {
+        #new:
+        if(sh[1] == 0){
+          amat1 = NULL
+        }else{
+          if (length(zeros_ps) > 0) {
+            amat0_lst = list()
+            grid3 = grid2[-zeros_ps, ,drop=FALSE]
+            row_id = as.numeric(rownames(grid3))
+            cts = row_id[which(row_id%%D1 == 0)]
+            #temp: check if zeros_ps contains some point %% D1 = 0
+            if (any((zeros_ps %% D1) == 0)) {
+              zeros_ps_at_cts = zeros_ps[which((zeros_ps %% D1) == 0)]
+              cts_add = row_id[sapply(zeros_ps_at_cts, function(elem) max(which(row_id < elem)))]
+              cts = sort(c(cts, cts_add))
+            }
+            obs = 1:nrow(grid3)
+            for (i in 1:length(cts)) {
+              if (i == 1) {
+                st = 1
+                #ed = cts[1]
+                ed = obs[row_id == cts[1]]
+              } else {
+                st = obs[row_id == cts[i-1]]+1
+                ed = obs[row_id == cts[i]]
+              }
+              gridi = grid3[st:ed,,drop=FALSE]
+              na_ps = which(apply(gridi, 1, function(x) all(is.na(x))))
+              if (length(na_ps) > 0) {
+                gridi = gridi[-na_ps,,drop=FALSE]
+              }
+              obsi = as.numeric(rownames(gridi))
+              vec = (D1*(i-1) + 1):(D1*i)
+              #vec = 1:D1
+              zerosi = vec[-which(vec %in% obsi)]
+              non_zerosi = vec[which(vec %in% obsi)]
+              D1i = nrow(gridi)
+              #if ed == st, it could be: 1,2,3,4 with 0,0,0,92 observations
+              #in this case, amat0i = NULL, and it will be removed before calling bdiag
+              if (length(zerosi) >= 1 & (ed > st)) {
+                if(sh[1] < 9){
+                  amat0i = makeamat(1:D1i, sh[1])
+                } else {
+                  #new:
+                  zeros_ps_i = zerosi%%D1
+                  if(any(zeros_ps_i %in% 0)){
+                    zeros_ps_i[which(zeros_ps_i %in% 0)] = D1
+                  } else {
+                    zeros_ps_i = zerosi%%D1
+                  }
+                  #not sure....
+                  amat0i = makeamat(1:D1i, sh[1], block.ave = block.ave.lst[[1]], 
+                                    block.ord = block.ord.lst[[1]], 
+                                    zeros_ps = zeros_ps_i, 
+                                    noord_cells = noord_cells[[1]], 
+                                    D_index = 1, xvs2=xvs2, grid2=grid2)
+                }
+                amat0_lst[[i]] = amat0i
+              } else if (length(zerosi) >= 1 & (ed == st)) {
+                #next
+                amat0i = 0
+                amat0_lst[[i]] = amat0i
+              } else if (length(zerosi) == 0) {
+                if(sh[1] < 9){
+                  amat0i = makeamat(1:D1, sh[1])
+                }else{
+                  #new:
+                  amat0i = makeamat(1:D1i, sh[1], block.ave = block.ave.lst[[1]], 
+                                    block.ord = block.ord.lst[[1]], 
+                                    zeros_ps = NULL, 
+                                    noord_cells = noord_cells[[1]], 
+                                    D_index = 1,
+                                    xvs2=xvs2, grid2=grid2)
+                }
+                amat0_lst[[i]] = amat0i
+              }
+              #amat0_lst[[i]] = amat0i
+            }
+          } else {
+            #if(sh[1] < 9){
+            amat0 = makeamat(1:D1, sh=sh[1], block.ave = block.ave.lst[[1]], block.ord = block.ord.lst[[1]],
+                             zeros_ps=NULL, noord_cells = noord_cells[[1]], D_index = 1, xvs2 = xvs2, grid2 = grid2)
+            #} else {
+            #  amat0 = makeamat_2d_block(x=1:D1, sh=sh[1], block.ave = block.ave.lst[[1]], block.ord = block.ord.lst[[1]], 
+            #        zeros_ps=NULL, noord_cells = noord_cells[[1]], D_index = 1, xvs2 = xvs2, grid2 = grid2, M_0 = M_0)
+            #}
+            amat0_lst = rep(list(amat0), D2)
           }
-          obs = 1:nrow(grid3)
-          for (i in 1:length(cts)) {
-            if (i == 1) {
-              st = 1
-              #ed = cts[1]
-              ed = obs[row_id == cts[1]]
-            } else {
-              st = obs[row_id == cts[i-1]]+1
-              ed = obs[row_id == cts[i]]
-            }
-            gridi = grid3[st:ed,,drop=FALSE]
-            na_ps = which(apply(gridi, 1, function(x) all(is.na(x))))
-            if (length(na_ps) > 0) {
-              gridi = gridi[-na_ps,,drop=FALSE]
-            }
-            obsi = as.numeric(rownames(gridi))
-            vec = (D1*(i-1) + 1):(D1*i)
-            #vec = 1:D1
-            zerosi = vec[-which(vec %in% obsi)]
-            non_zerosi = vec[which(vec %in% obsi)]
-            D1i = nrow(gridi)
-            #if ed == st, it could be: 1,2,3,4 with 0,0,0,92 observations
-            #in this case, amat0i = NULL, and it will be removed before calling bdiag
-            if (length(zerosi) >= 1 & (ed > st)) {
-              amat0i = makeamat(1:D1i, sh[1])
-              amat0_lst[[i]] = amat0i
-            } else if (length(zerosi) >= 1 & (ed == st)) {
-              #next
-              amat0i = 0
-              amat0_lst[[i]] = amat0i
-            } else if (length(zerosi) == 0) {
-              amat0i = makeamat(1:D1, sh[1])
-              amat0_lst[[i]] = amat0i
-            }
-            #amat0_lst[[i]] = amat0i
-          }
-        } else {
-          amat0 = makeamat(1:D1, sh=sh[1], block.ave = block.ave.lst[[1]], block.ord = block.ord.lst[[1]], 
-                           zeros_ps = zeros_ps, noord_cells = noord_cells[[1]])
-          amat0_lst = rep(list(amat0), D2)
+          amat0_lst = Filter(Negate(is.null), amat0_lst)
+          amat1 = bdiag(amat0_lst)
+          amat1 = as.matrix(amat1)
         }
-        amat0_lst = Filter(Negate(is.null), amat0_lst)
-        amat1 = bdiag(amat0_lst)
-        amat1 = as.matrix(amat1)
       }
-      #print (dim(amat1))
-      #new
-      if (sh[1] == 9 | sh[1] == 10) {
-        #revise order vector when D >= 2, temp
-        block.ave1 = block.ave.lst[[1]]
-        block.ord1 = block.ord.lst[[1]]
-        if (length(block.ave1) > 1) {
-          block.ave1 = rep(block.ave1, D2)
-        }
-        if (length(block.ord1) > 1) {
-          block.ord1 = rep(block.ord1, D2)
-        }
-        amat1 = makeamat(1:D1, sh[1], block.ave = block.ave1, block.ord = block.ord1, 
-                         zeros_ps = zeros_ps, noord_cells = noord_cells[[1]])
-        #amat1 = makeamat(1:D1, sh[1], block.ave = block.ave.lst[[1]], 
-        #                 block.ord = block.ord.lst[[1]], zeros_ps = zeros_ps, noord_cells = noord_cells[[1]])
-      }
+      #2D
       amat2 = NULL
       if (sh[2] < 3) {
         nr2 = D1*(D2-1)
@@ -1710,18 +2004,11 @@ makeamat_2D = function(x=NULL, sh, grid2=NULL, zeros_ps=NULL, noord_cells=NULL,
           }
           amat2 = rbind(amat2, amat2_add)
         } else if (sh[2] == 9 | sh[2] == 10) {## block ordering or block average
-          #print (block.ave.lst[[2]])
-          #print (block.ord.lst[[2]])
-          #print (D2)
-          #temp: revise the order vector
-          block.ave2 = block.ave.lst[[2]]
-          block.ord2 = block.ord.lst[[2]]
-          block.ave2 = rep(block.ave2, each=D1)
-          block.ord2 = rep(block.ord2, each=D1)
-          amat2 = makeamat(1:D2, sh[2], block.ave = block.ave2, 
-                           block.ord = block.ord2, 
-                           zeros_ps = zeros_ps, 
-                           noord_cells = noord_cells[[2]])
+          amat2 = makeamat_2d_block(x=NULL, sh[2], block.ave = block.ave.lst[[2]], 
+                                    block.ord = block.ord.lst[[2]], 
+                                    zeros_ps = zeros_ps, 
+                                    noord_cells = noord_cells[[2]], 
+                                    D_index=2, xvs2=xvs2, grid2=grid2, M_0=M_0)
         }
       }
       amat = rbind(amat1, amat2)
@@ -1733,22 +2020,9 @@ makeamat_2D = function(x=NULL, sh, grid2=NULL, zeros_ps=NULL, noord_cells=NULL,
     nc = cump[M]
     amat1 = amat2 = amatm = NULL
     
-    # 1D
-    if(sh[1] == 9 | sh[2] == 10){
-      #temp: revise the order vector
-      block.ave1 = block.ave.lst[[1]]
-      block.ord1 = block.ord.lst[[1]]
-      rpts = rev(cumprod(Ds[-1]))[1]
-      if (length(block.ave1) > 1) {
-        block.ave1 = rep(block.ave1, rpts)
-      }
-      if (length(block.ord1) > 1) {
-        block.ord1 = rep(block.ord1, rpts)
-      }
-      block.ave.lst[[1]] = block.ave1
-      block.ord.lst[[1]] = block.ord1
-      amat1 = makeamat(1:D1, sh[1], block.ave = block.ave1, block.ord = block.ord1, 
-                       zeros_ps = zeros_ps, noord_cells = noord_cells[[1]])
+    # 1D: group sh=9 or sh=10 with other shapes in 1D
+    if(sh[1] == 0){
+      amat1 = NULL
     } else {
       if(length(zeros_ps)>0){
         amat0_lst = list()
@@ -1781,13 +2055,24 @@ makeamat_2D = function(x=NULL, sh, grid2=NULL, zeros_ps=NULL, noord_cells=NULL,
           non_zerosi = vec[which(vec %in% obsi)]
           D1i = nrow(gridi)
           if (length(zerosi) >= 1 & (ed > st)) {
-            amat0i = makeamat(1:D1i, sh[1], block.ave=block.ave.lst[[1]], block.ord=block.ord.lst[[1]])
+            #amat0i = makeamat(1:D1i, sh[1], block.ave=block.ave.lst[[1]], block.ord=block.ord.lst[[1]])
+            #new:
+            zeros_ps_i = zerosi%%D1
+            if(any(zeros_ps_i %in% 0)){
+              zeros_ps_i[which(zeros_ps_i %in% 0)] = D1
+            } #else {
+            #zeros_ps_i = zerosi%%D1
+            #}
+            amat0i = makeamat(1:D1i, sh[1], block.ave = block.ave.lst[[1]], block.ord = block.ord.lst[[1]], 
+                              zeros_ps = zeros_ps_i, noord_cells = noord_cells[[1]], xvs2=xvs2, grid2=grid2)
             amat0_lst[[i]] = amat0i
           } else if (length(zerosi) >= 1 & (ed == st)) {
             amat0i = 0
             amat0_lst[[i]] = amat0i
           } else if (length(zerosi) == 0) {
-            amat0i = makeamat(1:D1, sh[1], block.ave=block.ave.lst[[1]], block.ord=block.ord.lst[[1]])
+            #amat0i = makeamat(1:D1, sh[1], block.ave=block.ave.lst[[1]], block.ord=block.ord.lst[[1]])
+            amat0i = makeamat(1:D1, sh[1], block.ave=block.ave.lst[[1]], block.ord=block.ord.lst[[1]], 
+                              zeros_ps = zeros_ps, noord_cells = noord_cells[[1]], xvs2=xvs2, grid2=grid2)
             amat0_lst[[i]] = amat0i
           }
         }
@@ -1796,7 +2081,8 @@ makeamat_2D = function(x=NULL, sh, grid2=NULL, zeros_ps=NULL, noord_cells=NULL,
         amat1 = as.matrix(amat1)
       }else{
         n1 = nc/D1
-        amat1_0 = makeamat(1:D1, sh[1], block.ave=block.ave.lst[[1]], block.ord=block.ord.lst[[1]])
+        amat1_0 = makeamat(1:D1, sh[1], block.ave=block.ave.lst[[1]], block.ord=block.ord.lst[[1]],
+                           zeros_ps = zeros_ps, noord_cells = noord_cells[[1]], xvs2=xvs2, grid2=grid2)
         amat1_0_lst = rep(list(amat1_0), n1)
         amat1 = bdiag(amat1_0_lst)
         amat1 = as.matrix(amat1)
@@ -1812,99 +2098,89 @@ makeamat_2D = function(x=NULL, sh, grid2=NULL, zeros_ps=NULL, noord_cells=NULL,
       gap = cump[i-1]
       ni = nc/nci
       
-      #temp: revise the order vector
-      block.avei = block.ave.lst[[i]]
-      block.ordi = block.ord.lst[[i]]
-      if (length(block.avei) > 1) {
-        tmp.avei = rep(block.avei, each = gap)
-        block.avei = rep(tmp.avei, ni)
-      }
-      if (length(block.ordi) > 1) {
-        tmp.ordi = rep(block.ordi, each = gap)
-        block.ordi = rep(tmp.ordi, ni)
-      }
-      block.ave.lst[[i]] = block.avei
-      block.ord.lst[[i]] = block.ordi
-      
       if (sh[i] %in% c(9,10)) {
-        amati = makeamat(1:Di, sh[i], block.ave = block.ave.lst[[i]], 
-                         block.ord = block.ord.lst[[i]], zeros_ps = zeros_ps, noord_cells = noord_cells[[i]])
+        amati = makeamat_2d_block(x=NULL, sh[i], block.ave = block.ave.lst[[i]], 
+                                  block.ord = block.ord.lst[[i]], 
+                                  zeros_ps = zeros_ps, 
+                                  noord_cells = noord_cells[[i]], 
+                                  D_index=i, xvs2=xvs2, grid2=grid2, M_0=M_0)
       } else {
-        if ((sh[i] %in% c(1,2))) {
-          nr = gap*(Di - 1)
-        } else {
-          if (Di < 3) {
-            stop ("For monotonicity + convexity constraints, number of domains must be >= 3!")
-          } else {
-            nr = gap*(Di - 2)
-          }
-        }
-        amati_0 = makeamat_2d(sh=sh[i], nr2=nr, nc2=nci, gap=gap, D2=Di, Ds=Ds)
-        
-        if(length(zeros_ps) == 0) {
-          amati_0_lst = rep(list(amati_0), ni)
-        } else {
-          amati_0_lst = vector("list", length = ni)
-          cts = seq(nci, nc, length=ni)
-          bool_lst = map(zeros_ps, .f = function(.x) as.numeric(cts >= .x))
-          #ps_lst keeps track of the cut points such that the point giving -1 is the upp bd 
-          #of the interval containining one zero cell
-          ps = map_dbl(bool_lst, .f = function(.x) min(which(.x == 1)))
-          cts_check = cts[ps]
-          for(k in 1:ni){
-            if(!(cts[k] %in% cts_check)){
-              #no zero cell in this interval
-              amati_0_lst[[k]] = amati_0
-            } else {
-              #find out the empty cells within an interval
-              if(k == 1) {
-                zeros_ctsk = zeros_ps[zeros_ps <= cts[k]]
-              }else{
-                zeros_ctsk = zeros_ps[zeros_ps <= cts[k] & zeros_ps > cts[k-1]]
-              }
-              nek = length(zeros_ctsk)
-              rm_id = NULL
-              amati_0_cp = amati_0; nci = ncol(amati_0)
-              col_ps_vec = NULL
-              for(k2 in 1:nek){
-                zero_k2 = zeros_ctsk[k2]
-                #check: zero_k2 %% nr = 0
-                if(zero_k2 != cts[k]){
-                  col_ps = zero_k2 %% nci
-                }else{
-                  col_ps = nci
-                }
-                col_ps_vec = c(col_ps_vec, col_ps)
-                
-                row_ps = col_ps - gap
-                #if((zero_k2 %% nr + gap) > nr){
-                if((col_ps + gap) > nci){
-                  rm_id = c(rm_id, row_ps)
-                }else{
-                  rm_id = c(rm_id, col_ps)
-                  amati_0_cp[row_ps, (col_ps+gap)] = 1
-                  amati_0_cp[row_ps, col_ps] = 0
-                }
-              }
-              
-              amati_0_cp = amati_0_cp[-rm_id, ]
-              #amati_0_cp = amati_0_cp[,-(zeros_ctsk%%nr)]
-              amati_0_cp = amati_0_cp[,-col_ps_vec]
-              amati_0_lst[[k]] = amati_0_cp
-            }
-          }
-        }
-        
-        amati = bdiag(amati_0_lst)
-        amati = as.matrix(amati)
         #new: sh[i] == 0
         if(sh[i] == 0){
-          #nri = nrow(amati)
-          #nci = ncol(amati)
-          #amati = matrix(0, nrow=nri, ncol=nci)
           amati = NULL
         }
-      }
+        if(sh[i] > 0) {
+          if ((sh[i] %in% c(1,2))) {
+            nr = gap*(Di - 1)
+          } 
+          if(sh[i] > 2){
+            if (Di < 3) {
+              stop ("For monotonicity + convexity constraints, number of domains must be >= 3!")
+            } else {
+              nr = gap*(Di - 2)
+            }
+          }
+          amati_0 = makeamat_2d(sh=sh[i], nr2=nr, nc2=nci, gap=gap, D2=Di, Ds=Ds)
+          
+          if(length(zeros_ps) == 0){
+            amati_0_lst = rep(list(amati_0), ni)
+          } else {
+            amati_0_lst = vector("list", length = ni)
+            cts = seq(nci, nc, length=ni)
+            bool_lst = map(zeros_ps, .f = function(.x) as.numeric(cts >= .x))
+            #ps_lst keeps track of the cut points such that the point giving -1 is the upp bd 
+            #of the interval containining one zero cell
+            ps = map_dbl(bool_lst, .f = function(.x) min(which(.x == 1)))
+            cts_check = cts[ps]
+            for(k in 1:ni){
+              if(!(cts[k] %in% cts_check)){
+                #no zero cell in this interval
+                amati_0_lst[[k]] = amati_0
+              } else {
+                #find out the empty cells within an interval
+                if(k == 1) {
+                  zeros_ctsk = zeros_ps[zeros_ps <= cts[k]]
+                }else{
+                  zeros_ctsk = zeros_ps[zeros_ps <= cts[k] & zeros_ps > cts[k-1]]
+                }
+                nek = length(zeros_ctsk)
+                rm_id = NULL
+                amati_0_cp = amati_0; nci = ncol(amati_0)
+                col_ps_vec = NULL
+                for(k2 in 1:nek){
+                  zero_k2 = zeros_ctsk[k2]
+                  #check: zero_k2 %% nr = 0
+                  if(zero_k2 != cts[k]){
+                    col_ps = zero_k2 %% nci
+                  }else{
+                    col_ps = nci
+                  }
+                  col_ps_vec = c(col_ps_vec, col_ps)
+                  
+                  row_ps = col_ps - gap
+                  #if((zero_k2 %% nr + gap) > nr){
+                  if((col_ps + gap) > nci){
+                    rm_id = c(rm_id, row_ps)
+                  }else{
+                    rm_id = c(rm_id, col_ps)
+                    #test:
+                    if(row_ps > 0){
+                      amati_0_cp[row_ps, (col_ps+gap)] = 1
+                      amati_0_cp[row_ps, col_ps] = 0
+                    }
+                  }
+                }
+                amati_0_cp = amati_0_cp[-rm_id, ]
+                #amati_0_cp = amati_0_cp[,-(zeros_ctsk%%nr)]
+                amati_0_cp = amati_0_cp[,-col_ps_vec]
+                amati_0_lst[[k]] = amati_0_cp
+              }
+            }
+          }
+          amati = bdiag(amati_0_lst)
+          amati = as.matrix(amati)
+        }
+      }  
       amat = rbind(amat, amati)
     }
     
@@ -1913,24 +2189,11 @@ makeamat_2D = function(x=NULL, sh, grid2=NULL, zeros_ps=NULL, noord_cells=NULL,
     gap = cump[M-1]
     Dm = Ds[M]
     if((sh[M] %in% c(9,10))){
-      #temp: revise the order vector
-      block.avei = block.ave.lst[[M]]
-      block.ordi = block.ord.lst[[M]]
-      #ni=1
-      if (length(block.avei) > 1) {
-        block.avei = rep(block.avei, each = gap)
-        #block.avei = rep(tmp.avei, ni)
-      }
-      if (length(block.ordi) > 1) {
-        block.ordi = rep(block.ordi, each = gap)
-        #block.ordi = rep(tmp.ordi, ni)
-      }
-      block.ave.lst[[M]] = block.avei
-      block.ord.lst[[M]] = block.ordi
-      
-      amatm = makeamat(1:Dm, sh[M], block.ave = block.ave.lst[[M]],
-                       block.ord = block.ord.lst[[M]], zeros_ps = zeros_ps, 
-                       noord_cells = noord_cells[[M]])
+      amatm = makeamat_2d_block(x=NULL, sh[M], block.ave = block.ave.lst[[M]], 
+                                block.ord = block.ord.lst[[M]], 
+                                zeros_ps = zeros_ps, 
+                                noord_cells = noord_cells[[M]], 
+                                D_index=M, xvs2=xvs2, grid2=grid2, M_0=M_0)
     } else {
       if ((sh[M] %in% c(1,2))) {
         nr = gap*(Dm-1)
@@ -1958,8 +2221,11 @@ makeamat_2D = function(x=NULL, sh, grid2=NULL, zeros_ps=NULL, noord_cells=NULL,
               rm_id = c(rm_id, row_ps)
             }else{
               rm_id = c(rm_id, col_ps)
-              amatm_cp[row_ps, (col_ps+gap)] = 1
-              amatm_cp[row_ps, col_ps] = 0
+              #test:
+              if(row_ps > 0){
+                amatm_cp[row_ps, (col_ps+gap)] = 1
+                amatm_cp[row_ps, col_ps] = 0
+              }
             }
           }
           amatm_cp = amatm_cp[-rm_id, ]
@@ -1973,9 +2239,9 @@ makeamat_2D = function(x=NULL, sh, grid2=NULL, zeros_ps=NULL, noord_cells=NULL,
   return (amat)
 }
 
-####
+############################################
 #local function to be called in makeamat_2D
-####
+############################################
 makeamat_2d = function(x=NULL, sh, nr2, nc2, gap, D1=NULL, D2, Ds = NULL, suppre = FALSE, interp = FALSE) {
   sm = 1e-7
   ms = NULL
@@ -2048,6 +2314,227 @@ makeamat_2d = function(x=NULL, sh, nr2, nc2, gap, D1=NULL, D2, Ds = NULL, suppre
   #rslt
 }
 
+################################################################
+#local function to be called in makeamat_2D for block ordering
+################################################################
+makeamat_2d_block = function(x=NULL, sh, block.ave = NULL, block.ord = NULL, zeros_ps = NULL, 
+                             noord_cells = NULL, D_index = 1, xvs2 = NULL, 
+                             grid2 = NULL, M_0 = NULL) {
+  #block average is not added yet
+  if (all(block.ave == -1) & (length(block.ord) > 1)) {
+    if(length(zeros_ps) > 0){
+      iter = 0
+      ps = sapply(xvs2[[D_index]], function(.x) which(grid2[, D_index] %in% .x)[1])
+      ps0 = ps
+      ps1_ed = ps[2] - 1
+      
+      amat = NULL
+      #obs = 1:length(block.ord)
+      while(iter < ps1_ed) {
+        ps = ps0 + iter
+        
+        block.ord_nz = block.ord
+        noord_ps = which(block.ord == 0)
+        rm_id = noord_ps
+        
+        #test:
+        z_rm_id = NULL
+        if(length(zeros_ps) > 0){
+          for(e in zeros_ps){
+            z_rm_id = c(z_rm_id, which(ps == e))
+          }
+        }
+        
+        if(length(z_rm_id) > 1){
+          rm_id = sort(c(z_rm_id, noord_ps))
+        }
+        
+        if(length(rm_id)>0){
+          block.ord_nz = block.ord[-rm_id]
+        }
+        
+        ubck = unique(block.ord_nz)
+        #use values in block.ord as an ordered integer vector
+        ubck = sort(ubck)
+        
+        nbcks = length(table(block.ord_nz))
+        szs = as.vector(table(block.ord_nz))
+        
+        if(length(rm_id) > 0){
+          ps = ps[-rm_id]
+        }
+        
+        #amati dimension: l1*l2...*lk by M
+        amati = NULL
+        for(i in 1:(nbcks-1)) {
+          ubck1 = ubck[i]
+          ubck2 = ubck[i+1]
+          bck_1 = which(block.ord_nz == ubck1)
+          bck_2 = which(block.ord_nz == ubck2)
+          l1 = length(bck_1)
+          l2 = length(bck_2)
+          
+          ps_bck1 = ps[which(block.ord_nz == ubck1)]
+          ps_bck2 = ps[which(block.ord_nz == ubck2)]
+          #for each element in block1, the value for each element in block 2 will be the same
+          #for each element in block1, the number of comparisons is l2
+          amat_bcki = NULL
+          
+          #tmp:
+          if(D_index == 1){
+            M.ord = length(block.ord) 
+          }else{
+            M.ord = M_0
+            #M.ord = nrow(grid2)
+          }
+          
+          amatj = matrix(0, nrow = l2, ncol = M.ord)
+          #amatj = matrix(0, nrow = l2, ncol = M.ord-rm_l)
+          #bck_1k = bck_1[1]
+          bck_1k = ps_bck1[1]
+          amatj[, bck_1k] = -1
+          row_pointer = 1
+          for(j in 1:l2){
+            #bck_2j = bck_2[j]
+            bck_2j = ps_bck2[j]
+            amatj[row_pointer, bck_2j] = 1
+            row_pointer = row_pointer + 1
+          }
+          amatj0 = amatj
+          amat_bcki = rbind(amat_bcki, amatj)
+          
+          if(l1 >= 2){
+            for(k in 2:l1) {
+              #bck_1k = bck_1[k]; bck_1k0 = bck_1[k-1]
+              bck_1k = ps_bck1[k]; bck_1k0 = ps_bck1[k-1]
+              amatj = amatj0
+              #set the value for the kth element in block 1 to be -1
+              #set the value for the (k-1)th element in block 1 back to 0
+              #keep the values for block 2
+              amatj[, bck_1k] = -1; amatj[, bck_1k0] = 0
+              amatj0 = amatj
+              amat_bcki = rbind(amat_bcki, amatj)
+            }
+          }
+          amati = rbind(amati, amat_bcki)
+        }
+        
+        amat = rbind(amat, amati)
+        iter = iter + 1
+      }
+      amat = amat[, -zeros_ps]
+      return (amat)
+    } else {
+      ps = sapply(xvs2[[D_index]], function(.x) which(grid2[, D_index] %in% .x)[1])
+      #nbcks is the total number of blocks
+      block.ord_nz = block.ord
+      noord_ps = which(block.ord == 0)
+      rm_id = unique(sort(noord_ps))
+      #test:
+      #z_rm_id = NULL
+      #if(length(zeros_ps) > 0){
+      #  for(e in zeros_ps){
+      #    z_rm_id = c(z_rm_id, max(which(ps <= e)))
+      #  }
+      #}
+      #if(ncol(grid2) == 1){
+      #rm_id = unique(sort(c(z_rm_id, noord_ps)))
+      #} else {
+      #  rm_id = unique(sort(noord_ps))
+      #}
+      if(length(rm_id)>0){
+        block.ord_nz = block.ord[-rm_id]
+      }
+      
+      ubck = unique(block.ord_nz)
+      #use values in block.ord as an ordered integer vector
+      ubck = sort(ubck)
+      
+      nbcks = length(table(block.ord_nz))
+      szs = as.vector(table(block.ord_nz))
+      
+      if(length(rm_id) > 0){
+        ps = ps[-rm_id]
+      }
+      #amat dimension: l1*l2...*lk by M
+      amat = NULL
+      for(i in 1:(nbcks-1)) {
+        ubck1 = ubck[i]
+        ubck2 = ubck[i+1]
+        bck_1 = which(block.ord_nz == ubck1)
+        bck_2 = which(block.ord_nz == ubck2)
+        l1 = length(bck_1)
+        l2 = length(bck_2)
+        
+        ps_bck1 = ps[which(block.ord_nz == ubck1)]
+        ps_bck2 = ps[which(block.ord_nz == ubck2)]
+        #for each element in block1, the value for each element in block 2 will be the same
+        #for each element in block1, the number of comparisons is l2
+        amat_bcki = NULL
+        
+        #tmp:
+        if(D_index == 1){
+          M.ord = length(block.ord) 
+        }else{
+          M.ord = M_0
+          #M.ord = nrow(grid2)
+        }
+        
+        amatj = matrix(0, nrow = l2, ncol = M.ord)
+        #amatj = matrix(0, nrow = l2, ncol = M.ord-rm_l)
+        #bck_1k = bck_1[1]
+        bck_1k = ps_bck1[1]
+        amatj[, bck_1k] = -1
+        row_pointer = 1
+        for(j in 1:l2){
+          #bck_2j = bck_2[j]
+          bck_2j = ps_bck2[j]
+          amatj[row_pointer, bck_2j] = 1
+          row_pointer = row_pointer + 1
+        }
+        amatj0 = amatj
+        amat_bcki = rbind(amat_bcki, amatj)
+        
+        if(l1 >= 2){
+          for(k in 2:l1) {
+            #bck_1k = bck_1[k]; bck_1k0 = bck_1[k-1]
+            bck_1k = ps_bck1[k]; bck_1k0 = ps_bck1[k-1]
+            amatj = amatj0
+            #set the value for the kth element in block 1 to be -1
+            #set the value for the (k-1)th element in block 1 back to 0
+            #keep the values for block 2
+            amatj[, bck_1k] = -1; amatj[, bck_1k0] = 0
+            amatj0 = amatj
+            amat_bcki = rbind(amat_bcki, amatj)
+          }
+        }
+        amat = rbind(amat, amat_bcki)
+      }
+      
+      if(D_index > 1){
+        iter = 1
+        amat0 = amat 
+        nr = nrow(amat0)
+        nc = ncol(amat0)
+        ps = sapply(xvs2[[D_index]], function(.x) which(grid2[,D_index] %in% .x)[1])
+        ps1_ed = ps[2] - 1
+        
+        if(length(noord_cells) > 0){
+          ps = ps[-noord_cells]
+        }
+        
+        while(iter < ps1_ed) {
+          ps1 = ps + iter
+          amati = matrix(0, nrow=nr, ncol=nc)
+          amati[, ps1] = amat0[, ps]
+          amat = rbind(amat, amati)
+          iter = iter + 1
+        }
+      }
+    }
+    return (amat)
+  }
+}
 
 ###############
 #print method
@@ -2065,7 +2552,7 @@ print.csvy = function(x, ...)
 #########################
 #empty cell imputation 
 ##########################
-impute_em2 = function(empty_cells, obs_cells, M, yvec, Nd, nd, Nhat, w, domain.ord, grid2, Ds=NULL, sh=NULL, muhat=NULL, lwr=NULL, upp=NULL, vsc=NULL)
+impute_em2 = function(empty_cells, obs_cells, M, yvec, Nd, nd, Nhat, w, domain.ord, grid2, Ds=NULL, sh=NULL, muhat=NULL, lwr=NULL, upp=NULL, vsc=NULL, amat_0=NULL)
 {
   ne = length(empty_cells)
   #observed sample size in cells with 0 or 1 n
@@ -2075,10 +2562,10 @@ impute_em2 = function(empty_cells, obs_cells, M, yvec, Nd, nd, Nhat, w, domain.o
   if (ne >= 1) {
     #ignore nd=1 now
     if (any(nd == 1)) {
-       ones_ps = which(nd == 1)
-       ones = length(ones_ps)
-    #   yvec_ones = yvec[which(obs_cells %in% ones_ps)]
-    #   Nhat_ones = Nhat[which(obs_cells %in% ones_ps)]
+      ones_ps = which(nd == 1)
+      ones = length(ones_ps)
+      #   yvec_ones = yvec[which(obs_cells %in% ones_ps)]
+      #   Nhat_ones = Nhat[which(obs_cells %in% ones_ps)]
     } 
     if (any(nd == 0)) {
       zeros_ps = which(nd == 0)
@@ -2174,7 +2661,7 @@ impute_em2 = function(empty_cells, obs_cells, M, yvec, Nd, nd, Nhat, w, domain.o
         }
         if (!bool) {
           if (!any(at_max) & !any(at_min)) {
-             muhatek = (mul+mur)/2
+            muhatek = (mul+mur)/2
           } else if (at_min) {
             muhatek = mul
           } else if (at_max)  {
@@ -2266,199 +2753,77 @@ impute_em2 = function(empty_cells, obs_cells, M, yvec, Nd, nd, Nhat, w, domain.o
     ye = we = NULL
     nslst = pslst = vector('list', 2)
     nbors = NULL
-    nbors_lst_0 = fn_nbors(empty_grids, grid2, mins, maxs)
-    for(k in 1:nrow(empty_grids)){
+    nbors_lst_0 = fn_nbors_3(empty_cells, amat_0, muhat)
+    for(k in 1:length(empty_cells)){
       #new: if is new because of rm_id2
-      nbors_k = nbors_lst_0[[k]]
-      if (nrow(nbors_k) > 0) {
-        ps = apply(nbors_k, 1, function(elem) which(apply(grid2, 1, function(gi) all(gi == elem))))
-        #temp
-        ord = order(ps)
-        ps2 = sort(ps)
-        #print (ps)
-        ns = nd[ps]
-        
-        pslst[[k]] = ps2
-        nslst[[k]] = ns
-        Ns = Nhat[ps]
-        ys = yvec[which(obs_cells%in%ps)]
-        
-        ndek = nd_ne[k]
-        #the way to choose l and r domainis are different in 2D case
-        # # of neighbors may > 2
-        row_id = as.numeric(rownames(grid2))
-        D1 = Ds[1]; D2 = Ds[2]
-        row_id = matrix(row_id, nrow=D1)
-  
-        ek = empty_cells[k]
-        row_col_val_ek = which(row_id == ek, arr.ind=T)
-        row_col_vals_nbors = NULL
-        for(psi in ps){
-          row_col_vals_nbors = rbind(row_col_vals_nbors, which(row_id == psi, arr.ind=T))
-        }
-        row_col_vals_nbors = as.data.frame(row_col_vals_nbors)
+      nbors_k_maxs = nbors_lst_0$nb_lst_maxs[[k]]
+      nbors_k_mins = nbors_lst_0$nb_lst_mins[[k]]
+      em_k = empty_cells[k]
       
-        d1_nbors = ps[which(row_col_vals_nbors$col == row_col_val_ek[2])]
-        if (length(ps) > length(d1_nbors)) {
-          d2_nbors = ps[!ps %in% d1_nbors]
-        } else {d2_nbors = 0}
-        #if (any(which(row_col_vals_nbors$row == row_col_val_ek[1]))){
-        #  d2_nbors = ps[which(row_col_vals_nbors$row == row_col_val_ek[1])]
-        #} else {
-        #  d2_nbors = 0
-        #}
-        nbors_lst = vector('list', 2)
-        nbors_lst[[1]] = d1_nbors
-        nbors_lst[[2]] = d2_nbors
-          
-        mu_1d = muhat[which(obs_cells%in%d1_nbors)]
-        mu_2d = muhat[which(obs_cells%in%d2_nbors)]
-        #new:
-        #if(sh[1] == 0){
-        #  mu_1d = NULL
-        #}
-        #if(sh[2] == 0){
-        #  mu_2d = NULL
-        #}
-        mu_12d = c(mu_1d, mu_2d)
-        mu_max = mu_12d[which.max(mu_12d)]
-        mu_min = mu_12d[which.min(mu_12d)]
-        
-        d12_nbors = c(d1_nbors, d2_nbors)
-        max_ps = d12_nbors[which.max(mu_12d)]
-        min_ps = d12_nbors[which.min(mu_12d)]
-        
-        v_max = vsc[which(obs_cells %in% max_ps)]
-        v_min = vsc[which(obs_cells %in% min_ps)]
-        
-        muhatek = (mu_min - 2*sqrt(v_min) + mu_max + 2*sqrt(v_max))/2
-        #print (paste('first ', muhatek))
-        #check two shape constraints
-        #at_maxk = ek == max(row_id)
-        #at_mink = ek == min(row_id)
-        at_maxk = c(row_col_val_ek[1] == D1, row_col_val_ek[2] == D2)
-        at_mink = c(row_col_val_ek[1] == 1, row_col_val_ek[2] == 1)
-          
-        mul_2d = mur_2d = NULL
-        row_ek = row_col_val_ek[1]; col_ek = row_col_val_ek[2]
-        for(d in 1:2) {
-          #print (c(k,d))
-          #new: one dim has no constraint
-          if (d == 1 & sh[d] == 0) {
-            next 
-          } else if (d == 2 & sh[d] == 0) {
-            break
-          }
-          psd = nbors_lst[[d]]
-          #if (length(psd) == 1)  {
-          #  lps = rps = psd 
-          #} else if (length(psd) > 1) {
-            if (at_maxk[d]) {
-              #lps = max(psd[psd < ek])
-              lps = min(psd[psd < ek])
-              #rps = lps
-              rps = NULL
-            }
-            if (at_mink[d]) {
-              #rps = min(psd[psd > ek])
-              rps = max(psd[psd > ek])
-              #lps = rps
-              lps = NULL
-            }
-            if (!at_maxk[d] & !at_mink[d]) {
-              lps = rps = NULL
-              if (any(psd < ek)){
-                lps = max(psd[psd < ek])
-              }
-              if (any(psd > ek)){
-                rps = min(psd[psd > ek])
-              }
-            }
-          #}
-        
-          if (!is.null(lps)) {
-            mul = min(muhat[which(obs_cells%in%lps)])
-          } else {mul = NULL}
-          if (!is.null(rps)) {
-            mur = max(muhat[which(obs_cells%in%rps)]) 
-          } else {mur = NULL}
-          
-          lr = c(lps, rps)
-          #temp for sh = 9
-          if (sh[d] == 1 | sh[d] == 9) {
-            if (length(lr) > 1) {
-              bool = mul <= muhatek & mur >= muhatek
-            } else if (length(lr) == 1) {
-              if (d == 1) {
-                if (row_ek == 1 | is.null(mul)) {
-                  bool = mur >= muhatek
-                } else if (row_ek == D1 | is.null(mur)) {
-                  bool = mul <= muhatek 
-                }
-              }
-              if (d == 2) {
-                if (col_ek == 1) {
-                  bool = mur >= muhatek
-                } else if (col_ek == D2) {
-                  bool = mul <= muhatek 
-                }
-              }
-            }
-          }
-          if (sh[d] == 2) {
-            if (length(lr) > 1) {
-              bool = mul >= muhatek & mur <= muhatek
-            } else if (length(lr) == 1) {
-              if (d == 1) {
-                if (row_ek == 1 | is.null(mul)) {
-                  bool = mur <= muhatek
-                } else if (row_ek == D1 | is.null(mur)) {
-                  bool = mul >= muhatek 
-                } 
-              }
-              if (d == 2) {
-                if (col_ek == 1 | is.null(mul)) {
-                  bool = mur <= muhatek
-                } else if (col_ek == D2 | is.null(mur)) {
-                  bool = mul >= muhatek 
-                } 
-              }
-            }
-          }
-          #print (muhatek)
-          if (!bool) {
-            if (!is.null(mul) & !is.null(mur)) {
-              # cat('mul:')
-              # print (mul)
-              # cat('mur:')
-              # print (mur)
-              # #will be used only when mul = mur? (most cases)
-              muhatek = (mul+mur)/2
-            } else if (!is.null(mul) & is.null(mur)) {
-              muhatek = mul
-            } else if (is.null(mul) & !is.null(mur))  {
-              muhatek = mur
-            }
-          }
-          #print (c(bool, muhatek))
+      if(length(nbors_k_mins) > 0 | length(nbors_k_maxs) > 0){
+        max_ps = min_ps = NULL
+        if(length(nbors_k_maxs)>0){
+          mu_max = max(muhat[obs_cells %in% nbors_k_maxs])
+          max_ps = (nbors_k_maxs[which(muhat[obs_cells %in% nbors_k_maxs] == mu_max)])[1]
+        }else{
+          #mu_max = muhat[em_k]
+          #max_ps = NULL
+          mu_min = min(muhat[obs_cells %in% nbors_k_mins])
+          min_ps = (nbors_k_mins[which(muhat[obs_cells %in% nbors_k_mins] == mu_min)])[1]
+          mu_max = mu_min
+          max_ps = min_ps
+          dmem = obs_cells[which(obs_cells%in%min_ps)]
         }
         
-        muhate = c(muhate, muhatek)
-        varek = (mu_max + 2*sqrt(v_max) - mu_min + 2*sqrt(v_min))^2 / 16 
-        vsce = c(vsce, varek)
-        lwrek = muhatek - 2*sqrt(varek)
-        uppek = muhatek + 2*sqrt(varek)
-        lwre = c(lwre, lwrek)
-        uppe = c(uppe, uppek)
+        if(length(nbors_k_mins)>0){
+          mu_min = min(muhat[obs_cells %in% nbors_k_mins])
+          min_ps = (nbors_k_mins[which(muhat[obs_cells %in% nbors_k_mins] == mu_min)])[1]
+        } else{
+          #mu_min = muhat[em_k]
+          #min_ps = NULL
+          mu_max = max(muhat[obs_cells %in% nbors_k_maxs])
+          max_ps = (nbors_k_maxs[which(muhat[obs_cells %in% nbors_k_maxs] == mu_max)])[1]
+          mu_min = mu_max
+          min_ps = max_ps
+          dmem = obs_cells[which(obs_cells%in%max_ps)]
+        }
         
-        nbors = rbind(nbors, nbors_k)
+        if(!is.null(max_ps)){
+          v_max = vsc[which(obs_cells %in% max_ps)]
+        }
+        if(!is.null(min_ps)){
+          v_min = vsc[which(obs_cells %in% min_ps)]
+        }
+        
+        if(!is.null(max_ps) & !is.null(min_ps)){
+          varek_new = (mu_max + 2*sqrt(v_max) - mu_min + 2*sqrt(v_min))^2 / 16 
+          muhatek = (mu_min - 2*sqrt(v_min) + mu_max + 2*sqrt(v_max))/2
+          #?mu_min
+          dmem = obs_cells[which(obs_cells%in%min_ps)]
+        }
+        
+        varek = varek_new
+        vsce = c(vsce, varek)
+        muhate = c(muhate, muhatek)
+        domain.ord_em = c(domain.ord_em, dmem)
+        
+        if (length(nbors_k_mins) == 0) {
+          lwrek = -1e+5
+          uppek = muhatek + 2*sqrt(varek)
+        } else if (length(nbors_k_maxs) == 0) {
+          uppek = 1e+5
+          lwrek = muhatek - 2*sqrt(varek)
+        } else if (length(nbors_k_mins) > 0 & length(nbors_k_maxs) > 0) {
+          uppek = muhatek + 2*sqrt(varek)
+          lwrek = muhatek - 2*sqrt(varek)
+        }
+        
+        uppe = c(uppe, uppek)
+        lwre = c(lwre, lwrek)
+        
       } else {
-        #temp: if there's no observed neighbor, use the previous imputation
-        #new: zeros_ps: 1  2  3, won't find pslst[[k-1]] for 1
-        #pslst[[k]] = pslst[[k-1]]
-        #nslst[[k]] = nslst[[k-1]]
-        ye = c(ye, rev(ye)[1])
-        we = c(we, rev(we)[1])
+        #ye = c(ye, rev(ye)[1])
+        #we = c(we, rev(we)[1])
         
         if (!is.null(muhat)) {
           muhate = c(muhate, rev(muhate)[1])
@@ -2469,19 +2834,11 @@ impute_em2 = function(empty_cells, obs_cells, M, yvec, Nd, nd, Nhat, w, domain.o
           uppe = c(uppe, rev(uppe)[1])
         }
       }
-      #print (muhate)
     }
-    #yvec_all[obs_cells] = yvec
-    #yvec_all[empty_cells] = ye
-    #w_all[obs_cells] = w[obs_cells] 
-    #w_all[obs_cells] = w
-    #w_all[empty_cells] = we
-    #yvec = yvec_all
-    #w = w_all
     
     domain.ord_all[obs_cells] = domain.ord
     #temp:
-    domain.ord_em = obs_cells[which(obs_cells%in%ps[1:length(empty_cells)])]
+    #domain.ord_em = obs_cells[which(obs_cells%in%ps[1:length(empty_cells)])]
     domain.ord_all[empty_cells] = domain.ord_em
     domain.ord = domain.ord_all
     
@@ -2505,11 +2862,10 @@ impute_em2 = function(empty_cells, obs_cells, M, yvec, Nd, nd, Nhat, w, domain.o
     }
   }
   
-  rslt = list(ps = ps, ns = ns, muhat = muhat, lwr = lwr, upp = upp, domain.ord = domain.ord, vsc = vsc)
+  rslt = list(muhat = muhat, lwr = lwr, upp = upp, domain.ord = domain.ord, vsc = vsc)
   #rslt = list(ps = ps, ns = ns, muhat = muhat, lwr = lwr, upp = upp, domain.ord = domain.ord, yvec = yvec, w = w)
   return(rslt)
 }
-
 
 ###############################
 #subrountine to find nbors (>=2D)
@@ -2523,13 +2879,31 @@ fn_nbors = function(empty_grids, grid2, mins, maxs){
     #ndek = nd_ne[k]
     #axes = apply(empty_grids[k,], 2, function(e) e + c(-1,1))
     nbors_k = NULL
+    # for(i in 1:ncol(grid2)){
+    #   pt1 = empty_grids[k, i]
+    #   pt2 = axes[, -i]
+    #   if (i == 1) {
+    #     if (is.matrix(pt2)) {
+    #       pts = t(apply(pt2, 2, function(e) c(pt1, e)))
+    #     } else {
+    #       pts = t(sapply(pt2, function(e) c(pt1, e)))
+    #     }
+    #   } else if (i > 1) {
+    #     if (is.matrix(pt2)) {
+    #       pts = t(apply(pt2, 2, function(e) c(e, pt1)))
+    #     } else {
+    #       pts = t(sapply(pt2, function(e) c(e, pt1)))
+    #     }
+    #   }
+    #   nbors_k = rbind(nbors_k, pts)
+    # }
     ptk = empty_grids[k, ]
     ptk = as.numeric(ptk)
     nc = ncol(grid2)
     for(i in 1:nc){
       pt1 = ptk[i]
-      pt2 = ptk[-i] 
-      axes = pt1 + c(-1,1) 
+      pt2 = ptk[-i]
+      axes = pt1 + c(-1,1)
       pair_i = matrix(0, nrow=2, ncol=nc)
       pair_i[1, i] = axes[1]; pair_i[1, -i] = pt2
       pair_i[2, i] = axes[2]; pair_i[2, -i] = pt2
@@ -2546,7 +2920,7 @@ fn_nbors = function(empty_grids, grid2, mins, maxs){
         nbh = nbors_k[h, ]
         bool = any(apply(empty_grids, 1, function(e) all(e == nbh)))
         if (bool) {
-          #rm_id2 = c(rm_id2, h) 
+          #rm_id2 = c(rm_id2, h)
           ps = as.numeric(which(apply(empty_grids, 1, function(e) all(e == nbh))))
           to_merge[[iter]] = sort(c(k, ps))
           iter = iter + 1
@@ -2587,7 +2961,7 @@ fn_nbors = function(empty_grids, grid2, mins, maxs){
         nbh = nbors_ps[h, ]
         bool = any(apply(empty_grids, 1, function(e) all(e == nbh)))
         if (bool) {
-          rm_id2 = c(rm_id2, h) 
+          rm_id2 = c(rm_id2, h)
         }
       }
       if (length(rm_id2) > 0) {
@@ -2606,13 +2980,15 @@ fn_nbors = function(empty_grids, grid2, mins, maxs){
 #Nd=2 only, Nd=1 coverage rate is good?
 ####################################################################################
 impute_em3 = function(small_cells, M, yvec, Nd, nd, Nhat, w, domain.ord, grid2, 
-                      Ds=NULL, sh=NULL, muhat=NULL, lwr=NULL, upp=NULL, vsc=NULL, new_obs_cells=NULL)
+                      Ds=NULL, sh=NULL, muhat=NULL, lwr=NULL, upp=NULL, 
+                      vsc=NULL, new_obs_cells=NULL, amat_0=NULL)
 {
   ne = length(small_cells)
   #observed sample size for n=2...10 cells
   #the `small_cells` are not empty
   nd_ne = nd[small_cells]
-  vsc_ne = vsc[which(new_obs_cells%in%small_cells)]
+  #vsc_ne = vsc[which(new_obs_cells%in%small_cells)]
+  vsc_ne = vsc[small_cells]
   
   lc = rc = 1:ne*0
   if (Nd >= 2) {
@@ -2628,159 +3004,230 @@ impute_em3 = function(small_cells, M, yvec, Nd, nd, Nhat, w, domain.ord, grid2,
     ye = we = NULL
     nslst = pslst = vector('list', 2)
     nbors = NULL
-    nbors_lst_0 = fn_nbors(empty_grids, grid2, mins, maxs)
-    for(k in 1:nrow(empty_grids)){
+    nbors_lst_0 = fn_nbors_2(small_cells, amat_0, muhat)
+    for(k in 1:length(small_cells)){
       #new: if is new because of rm_id2
-      nbors_k = nbors_lst_0[[k]]
-      if (nrow(nbors_k) > 0) {
-        ps = apply(nbors_k, 1, function(elem) which(apply(grid2, 1, function(gi) all(gi == elem))))
-        #temp
-        ord = order(ps)
-        ps2 = sort(ps)
-        #print (ps)
-        ns = nd[ps]
-        
-        pslst[[k]] = ps2
-        nslst[[k]] = ns
-        Ns = Nhat[ps]
-        ys = yvec[which(new_obs_cells%in%ps)]
-        
-        ndek = nd_ne[k]
-        #the way to choose l and r domainis are different in 2D case
-        # # of neighbors may > 2
-        row_id = as.numeric(rownames(grid2))
-        D1 = Ds[1]; D2 = Ds[2]
-        row_id = matrix(row_id, nrow=D1)
-        
-        ek = small_cells[k]
-        row_col_val_ek = which(row_id == ek, arr.ind=T)
-        row_col_vals_nbors = NULL
-        for(psi in ps){
-          row_col_vals_nbors = rbind(row_col_vals_nbors, which(row_id == psi, arr.ind=T))
-        }
-        row_col_vals_nbors = as.data.frame(row_col_vals_nbors)
-        
-        d1_nbors = ps[which(row_col_vals_nbors$col == row_col_val_ek[2])]
-        if (length(ps) > length(d1_nbors)) {
-          d2_nbors = ps[!ps %in% d1_nbors]
-        } else {d2_nbors = 0}
-        #if (any(which(row_col_vals_nbors$row == row_col_val_ek[1]))){
-        #  d2_nbors = ps[which(row_col_vals_nbors$row == row_col_val_ek[1])]
-        #} else {
-        #  d2_nbors = 0
-        #}
-        nbors_lst = vector('list', 2)
-        nbors_lst[[1]] = d1_nbors
-        nbors_lst[[2]] = d2_nbors
-        
-        mu_1d = muhat[which(new_obs_cells%in%d1_nbors)]
-        mu_2d = muhat[which(new_obs_cells%in%d2_nbors)]
-        mu_12d = c(mu_1d, mu_2d)
-        mu_max = mu_12d[which.max(mu_12d)]
-        mu_min = mu_12d[which.min(mu_12d)]
-        
-        d12_nbors = c(d1_nbors, d2_nbors)
-        max_ps = d12_nbors[which.max(mu_12d)]
-        min_ps = d12_nbors[which.min(mu_12d)]
-        
-        v_max = vsc[which(new_obs_cells %in% max_ps)]
-        v_min = vsc[which(new_obs_cells %in% min_ps)]
-        
-        muhatek = (mu_min - 2*sqrt(v_min) + mu_max + 2*sqrt(v_max))/2
-        #check two shape constraints
-        #at_maxk = ek == max(row_id)
-        #at_mink = ek == min(row_id)
-        at_maxk = c(row_col_val_ek[1] == D1, row_col_val_ek[2] == D2)
-        at_mink = c(row_col_val_ek[1] == 1, row_col_val_ek[2] == 1)
-        
-        muhate = c(muhate, muhatek)
-        #new:
-        varek_new = (mu_max + 2*sqrt(v_max) - mu_min + 2*sqrt(v_min))^2 / 16 
-        #the variance by survey
-        #the if else can be replaced by vectorized computation?
-        vsc_nek = vsc_ne[k]
-        if(ndek >= 1 & ndek <= 3){
-          #varek = varek_new*.5 + vsc_nek*.5 (not good)
-          #varek = varek_new*.8 + vsc_nek*.2
-          #varek = varek_new*.9 + vsc_nek*.1
-          varek = varek_new
-        }else if(ndek == 4 | ndek == 5){
-          #varek = varek_new*.5 + vsc_nek*.5 (not good)
-          #varek = varek_new*.6 + vsc_nek*.4
-          #varek = varek_new*.7 + vsc_nek*.3
-          varek = varek_new
-        }else if(ndek == 6 | ndek == 7){
-          #varek = varek_new*.5 + vsc_nek*.5 (not good)
-          #varek = varek_new*.4 + vsc_nek*.6
-          #varek = varek_new*.5 + vsc_nek*.5
-          varek = varek_new
-        }else if(ndek == 8 | ndek == 9){
-          #varek = varek_new*.2 + vsc_nek*.8
-          #varek = varek_new*.1 + vsc_nek*.9
-          #varek = varek_new*.3 + vsc_nek*.7
-          varek = varek_new
-        }else if(ndek == 10){
-          #varek = varek_new*.1 + vsc_nek*.9
-          #varek = varek_new*.1 + vsc_nek*.9
-          varek = varek_new
-        }
-        
-        lwrek = muhatek - 2*sqrt(varek)
-        uppek = muhatek + 2*sqrt(varek)
-        lwre = c(lwre, lwrek)
-        uppe = c(uppe, uppek)
-        vsce = c(vsce, varek_new)
-        
-        nbors = rbind(nbors, nbors_k)
-      } else {
-        #temp: if there's no observed neighbor, use the previous imputation
-        #new: zeros_ps: 1  2  3, won't find pslst[[k-1]] for 1
-        #pslst[[k]] = pslst[[k-1]]
-        #nslst[[k]] = nslst[[k-1]]
-        ye = c(ye, rev(ye)[1])
-        we = c(we, rev(we)[1])
-        
-        if (!is.null(muhat)) {
-          muhate = c(muhate, rev(muhate)[1])
-        }
-        if (!is.null(vsc)) {
-          lwre = c(lwre, rev(lwre)[1])
-          uppe = c(uppe, rev(uppe)[1])
-          vsce = c(vsce, rev(vsce)[1])
-        }
+      #nbors_k_maxs = nbors_lst_0$nb_lst_maxs[[k]]
+      #nbors_k_mins = nbors_lst_0$nb_lst_mins[[k]]
+      max_ps = (nbors_lst_0$nb_lst_maxs[[k]])[1]
+      min_ps = (nbors_lst_0$nb_lst_mins[[k]])[1]
+      sm_k = small_cells[k]
+      
+      if(length(max_ps) > 0){      
+        mu_max = muhat[max_ps]
+        v_max = vsc[max_ps]
       }
-      #print (c(k, length(lwre)))
+      if(length(min_ps) > 0){
+        mu_min = muhat[min_ps]
+        v_min = vsc[min_ps]
+      }
+      #new:
+      vsc_nek = vsc_ne[k]
+      if(length(min_ps) > 0 & length(max_ps) > 0){
+        varek_new = (mu_max + 2*sqrt(v_max) - mu_min + 2*sqrt(v_min))^2 / 16 
+      }else{
+        varek_new = vsc_nek
+      }
+      #the variance by survey
+      #the if else can be replaced by vectorized computation?
+      vsce = c(vsce, varek_new)
+      #print(c(k, length(vsce)))
     }
     
-    # domain.ord_all[new_obs_cells] = domain.ord
-    # #temp:
-    # domain.ord_em = new_obs_cells[which(new_obs_cells%in%ps[1:length(small_cells)])]
-    # domain.ord_all[small_cells] = domain.ord_em
-    # domain.ord = domain.ord_all
-    # 
-    # # if (!is.null(muhat)) {
-    #   muhat_all[new_obs_cells] = muhat
-    #   muhat_all[small_cells] = muhate
-    #   muhat = muhat_all
-    # }
-    # 
     if (!is.null(vsc)){
-      lwr_all[new_obs_cells] = lwr
-      #add the case when all cells are small cells
-      if(!is.null(lwre)){
-        lwr_all[small_cells] = lwre
-        upp_all[small_cells] = uppe
-        vsc_all[small_cells] = vsce
-      }
-      upp_all[new_obs_cells] = upp
-      vsc_all[new_obs_cells] = vsc
- 
+      vsc_all = vsc
+      vsc_all[small_cells] = vsce
       vsc = vsc_all  
-      upp = upp_all
-      lwr = lwr_all
+    }
+  }
+  #rslt = list(lwr = lwr, upp = upp, vsc = vsc)
+  rslt = list(vsc = vsc)
+  return(rslt)
+}
+
+###############################
+#subrountine to find nbors (>=2D)
+###############################
+fn_nbors_2 = function(small_cells, amat, muhat){
+  nr = length(small_cells)
+  nb_lst_mins = nb_lst_maxs = vector("list", length = nr)
+  #to_merge = list()
+  #iter = 1
+  for(k in 1:nr){ 
+    ptk = small_cells[k]
+    col_ptk = amat[, ptk]
+    rows_ps = which(col_ptk != 0)
+    amat_sub = amat[rows_ps, ,drop=FALSE]
+    nbors_k = apply(amat_sub, 1, function(.x) which(.x != 0)) %>% as.vector() %>% unique() 
+    nbors_k = nbors_k[-which(nbors_k == ptk)]
+    #1: min candidates; -1: max candidates
+    sgn_nbors_k = col_ptk[which(col_ptk != 0)]
+    nbors_k_mins = nbors_k[sgn_nbors_k == 1]
+    nbors_k_maxs = nbors_k[sgn_nbors_k == -1]
+    nbors_k_min = nbors_k_max = integer(0L)
+    if(length(nbors_k_maxs) > 0){
+      max_mu = max(muhat[nbors_k_maxs])
+      nbors_k_max = nbors_k_maxs[which(muhat[nbors_k_maxs] == max_mu)]
+    }
+    if(length(nbors_k_mins) > 0){
+      min_mu = min(muhat[nbors_k_mins])
+      nbors_k_min = nbors_k_mins[which(muhat[nbors_k_mins] == min_mu)]
+    }
+    
+    nb_lst_mins[[k]] = nbors_k_min
+    nb_lst_maxs[[k]] = nbors_k_max
+  }
+  
+  rslt = list(nb_lst_maxs=nb_lst_maxs, nb_lst_mins=nb_lst_mins)
+  return (rslt)
+}
+
+##############################################################
+#subrountine to find nbors (>=2D)
+#new neighbor routine for >= 2D empty cells
+##############################################################
+fn_nbors_3 = function(empty_cells, amat_0, muhat){
+  nr = length(empty_cells)
+  nb_lst_mins = nb_lst_maxs = vector("list", length = nr)
+  to_merge_mins = to_merge_maxs = list()
+  iter = 1
+  for(k in 1:nr){
+    nbors_k = NULL
+    ptk = empty_cells[k]
+    col_ptk = amat_0[, ptk]
+    rows_ps = which(col_ptk != 0)
+    amat_sub = amat_0[rows_ps, ,drop=FALSE]
+    nbors_k = apply(amat_sub, 1, function(.x) which(.x != 0)) %>% as.vector() %>% unique() 
+    nbors_k = nbors_k[-which(nbors_k == ptk)]
+    #1: min candidates; -1: max candidates
+    sgn_nbors_k = col_ptk[which(col_ptk != 0)]
+    nbors_k_mins = nbors_k[sgn_nbors_k == 1]
+    nbors_k_maxs = nbors_k[sgn_nbors_k == -1]
+    if(length(nbors_k_maxs) > 0){
+      nbors_k_maxs = nbors_k_maxs[which(muhat[nbors_k_maxs] == max(muhat[nbors_k_maxs]))]
+    }
+    if(length(nbors_k_mins) > 0){
+      nbors_k_mins = nbors_k_mins[which(muhat[nbors_k_mins] == min(muhat[nbors_k_mins]))]
+    }
+    
+    #new: label the cells whose neighbors should be merged later
+    rm_id2 = NULL
+    if (length(nbors_k_maxs) > 0) {
+      for(h in 1:length(nbors_k_maxs)){
+        nbh = nbors_k_maxs[h]
+        bool = any(empty_cells %in% nbh)
+        if (bool) {
+          ps = which(empty_cells == nbh)
+          to_merge_maxs[[iter]] = sort(c(k, ps))
+          iter = iter + 1
+        }
+      }
+    }
+    
+    if (length(nbors_k_mins) > 0) {
+      for(h in 1:length(nbors_k_mins)){
+        nbh = nbors_k_mins[h]
+        bool = any(empty_cells %in% nbh)
+        if (bool) {
+          ps = which(empty_cells == nbh)
+          to_merge_mins[[iter]] = sort(c(k, ps))
+          iter = iter + 1
+        }
+      }
+    }
+    
+    nb_lst_mins[[k]] = nbors_k_mins 
+    nb_lst_maxs[[k]] = nbors_k_maxs
+  }
+  
+  #need to be more efficient
+  to_merge_maxs = unique(to_merge_maxs)
+  to_merge_mins = unique(to_merge_mins)
+  nm_maxs = length(to_merge_maxs)
+  nm_mins = length(to_merge_mins)
+  if (nm_maxs > 1) {
+    for(i in 1:(nm_maxs-1)){
+      to_merge_i = to_merge_maxs[[i]]
+      vec = to_merge_i
+      vec_ps = i
+      for(j in (i+1):nm_maxs){
+        to_merge_j = to_merge_maxs[[j]]
+        if(any(to_merge_j %in% to_merge_i)){
+          vec = sort(unique(c(vec, to_merge_j)))
+          vec_ps = c(vec_ps, j)
+        }
+      }
+      if (length(vec_ps) > 1) {
+        to_merge_maxs[vec_ps] = lapply(to_merge_maxs[vec_ps], function(x) x = vec)
+      }
+    }
+    to_merge_maxs = unique(to_merge_maxs)
+  }
+  
+  if (nm_maxs > 0) {
+    for(i in 1:length(to_merge_maxs)) {
+      ps = to_merge_maxs[[i]]
+      nbors_ps_maxs = unlist(nb_lst_maxs[ps]) %>% unique()
+      rm_id2_maxs = NULL
+      for(h in 1:length(nbors_ps_maxs)) {
+        nbh = nbors_ps_maxs[h]
+        bool = any(empty_cells %in% nbh)
+        if (bool) {
+          rm_id2_maxs = c(rm_id2_maxs, h)
+        }
+      }
+      if (length(rm_id2_maxs) > 0) {
+        nbors_ps_maxs = nbors_ps_maxs[-rm_id2_maxs]
+      }
+      nb_lst_maxs[ps] = lapply(nb_lst_maxs[ps], function(x) x = nbors_ps_maxs)
+      
+      ###
+      for(h in 1:length(nbors_ps_maxs)) {
+        nbh = nbors_ps_maxs[h]
+        bool = any(empty_cells %in% nbh)
+        if (bool) {
+          rm_id2_maxs = c(rm_id2_maxs, h)
+        }
+      }
+      if (length(rm_id2_maxs) > 0) {
+        nbors_ps_maxs = nbors_ps_maxs[-rm_id2_maxs]
+      }
+      nb_lst_maxs[ps] = lapply(nb_lst_maxs[ps], function(x) x = nbors_ps_maxs)
     }
   }
   
-  rslt = list(lwr = lwr, upp = upp, vsc = vsc)
-  return(rslt)
+  if (nm_mins > 0) {
+    for(i in 1:length(to_merge_mins)) {
+      ps = to_merge_mins[[i]]
+      nbors_ps_mins = unlist(nb_lst_mins[ps]) %>% unique()
+      rm_id2_mins = NULL
+      for(h in 1:length(nbors_ps_mins)) {
+        nbh = nbors_ps_mins[h]
+        bool = any(empty_cells %in% nbh)
+        if (bool) {
+          rm_id2_mins = c(rm_id2_mins, h)
+        }
+      }
+      if (length(rm_id2_mins) > 0) {
+        nbors_ps_mins = nbors_ps_mins[-rm_id2_mins]
+      }
+      nb_lst_mins[ps] = lapply(nb_lst_mins[ps], function(x) x = nbors_ps_mins)
+      
+      ###
+      for(h in 1:length(nbors_ps_mins)) {
+        nbh = nbors_ps_mins[h]
+        bool = any(empty_cells %in% nbh)
+        if (bool) {
+          rm_id2_mins = c(rm_id2_mins, h)
+        }
+      }
+      if (length(rm_id2_mins) > 0) {
+        nbors_ps_mins = nbors_ps_mins[-rm_id2_mins]
+      }
+      nb_lst_mins[ps] = lapply(nb_lst_mins[ps], function(x) x = nbors_ps_mins)
+    }
+  }
+  
+  rslt = list(nb_lst_maxs=nb_lst_maxs, nb_lst_mins=nb_lst_mins)
+  return (rslt)
 }

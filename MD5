@@ -1,8 +1,8 @@
-6d368692b6be310d8f602d4e61f99a73 *DESCRIPTION
+505406add4c31d990c8fa8319834e7f2 *DESCRIPTION
 81c67749f9533fd620c92475582f856f *NAMESPACE
-13cba8a9415cae0ff9aa4d0d55e2c60b *R/csurvey.R
+3cb3b243efb874f7b668ec17e9ea70dd *R/csurvey.R
 23447dbe7126705d3484318962f039b7 *man/block.Ord.Rd
-c3c53ea775a31b3a6bb590d7e1467109 *man/csvy.Rd
+9a62a7b783d02183eae9d38b7db3ceda *man/csvy.Rd
 98c0f2eabb3f5afaaf2efbfbd16a7362 *man/csvy.fit.Rd
 7a790392dbea6e06f51a818f55e5cd8d *man/decr.Rd
 6e153dd963311f03393ffa9f125a22cc *man/fitted.csvy.Rd

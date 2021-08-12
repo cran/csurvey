@@ -24,7 +24,7 @@ Note that when there is any empty domain, the user must specify the total number
 
 \usage{
 csvy(formula, data, design, nD=NULL, family=gaussian, amat=NULL, 
-  level=0.95, n.mix=100L, test=TRUE)
+  level=0.95, n.mix=100L, test=TRUE, alpha=NULL)
 }
 
 
@@ -65,6 +65,9 @@ Confidence level of the approximate confidence surfaces. The default is 0.95.
   \item{test}{
 A logical scalar. If test == TRUE, then the p-value for the test \eqn{H_0:\theta} is in \eqn{V} versus \eqn{H_1:\theta} is in \eqn{C} is returned. \eqn{C} is the constraint cone of the form \eqn{\{\beta: A\beta \ge 0\}}, and \eqn{V} is the null space of \eqn{A}. The default is test = TRUE.
 }
+  \item{alpha}{
+A numeric value between 0 and 1. It is used to update the variance estimate for domains with small sample sizes, i.e., sample sizes between 1 and 10, inclusively. If the user doesn't provide this value, then the routine will determine the value of alpha according to the rule specified in Liao, X, Xu, X, and Meyer, M. C. (2021). The default is alpha = NULL. 
+}
 }
 
 \value{
@@ -89,6 +92,8 @@ total number of domains.}
 
 
 \references{
+  Liao, X, Xu, X, and Meyer, M. C. (2021) csurvey: Implementing order constraints in survey data analysis. 
+ 
   Xu, X. and Meyer, M. C. (2021) One-sided testing of population domain means in surveys. 
   
   Oliva, C., Meyer, M. C., and Opsomer, J.D. (2020) Estimation and inference of domain means subject to qualitative constraints. \emph{Survey Methodology}
@@ -146,8 +151,6 @@ rds=as.svrepdesign(dstrat, type="JKn")
 ansc1 = csvy(api00~decr(mcat),data=strsamp,design=dstrat, nD=D1)
 # checked estimated domain means
 # ansc1$muhat
-# checked sorted estimated domain means
-# ansc1$muhat.s
 
 # Example 2: monotonic in two dimensions
 ansc2 = csvy(api00~incr(gcat)*decr(mcat),data=strsamp,design=dstrat, nD=(D1*D2))
