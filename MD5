@@ -1,12 +1,6 @@
-505406add4c31d990c8fa8319834e7f2 *DESCRIPTION
-81c67749f9533fd620c92475582f856f *NAMESPACE
-3cb3b243efb874f7b668ec17e9ea70dd *R/csurvey.R
+d222d62d9f45824ece97c166a7f8afae *ChangeLog
+f925d7aa907ce4769cc4d69891b524fe *DESCRIPTION
+379be37bd24fd8a22e1ce89cda516e8d *NAMESPACE
+2a20b41b775f0d81c7671eeb25c3bb45 *R/csurvey.R
 23447dbe7126705d3484318962f039b7 *man/block.Ord.Rd
-9a62a7b783d02183eae9d38b7db3ceda *man/csvy.Rd
-98c0f2eabb3f5afaaf2efbfbd16a7362 *man/csvy.fit.Rd
-7a790392dbea6e06f51a818f55e5cd8d *man/decr.Rd
-6e153dd963311f03393ffa9f125a22cc *man/fitted.csvy.Rd
-6455e51d4e7f35823b491584ebe98b52 *man/incr.Rd
-07e322e9f88d989fabadb95b9cca9d28 *man/plotpersp.Rd
-254d87cd5c5ac5d5f521af0dbdfe7a27 *man/plotpersp.csvy.Rd
-ca1dbffa2ffa58d30013e6588e1065d2 *man/print.csvy.Rd
+4c85fe9c346b6990e384266ef15528ae *man/csvy.Rd

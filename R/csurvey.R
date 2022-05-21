@@ -1,9 +1,16 @@
 #############################
 ## main routine for the user#
 #############################
-csvy <- function(formula, data, design, nD=NULL, family=gaussian, amat=NULL, 
-                level=0.95, n.mix=100L, test=TRUE, alpha=NULL) {
+csvy <- function(formula, design, subset=NULL, nD=NULL, family=stats::gaussian(),
+                 amat=NULL, level=0.95, n.mix=100L, test=TRUE,...) {
   cl <- match.call()
+  subset <- substitute(subset)
+  subset <- eval(subset, model.frame(design), parent.frame())
+  if (!is.null(subset)){
+    if (any(is.na(subset)))
+      stop("subset must not contain NA values")
+    design <- design[subset,]
+  }
   if (is.character(family))
     family <- get(family, mode = "function", envir = parent.frame())
   if (is.function(family))
@@ -12,22 +19,24 @@ csvy <- function(formula, data, design, nD=NULL, family=gaussian, amat=NULL,
     stop("'family' not recognized!")
   labels <- NULL
   mf <- match.call(expand.dots = FALSE)
-  m <- match(c("formula", "data"), names(mf), 0L)
+  m <- match("formula", names(mf), 0L)
   mf <- mf[c(1L, m)]
   mf[[1L]] <- as.name("model.frame")
-  mf <- eval(mf, parent.frame())
+  mf <- eval(mf, model.frame(design), parent.frame())
   ynm <- names(mf)[1]
   mt <- attr(mf, "terms")
   y <- model.response(mf, "any")
   shapes_add <- NULL
-  xmat_add0 <- NULL; xmat_add <- NULL; xnms_add <- NULL
-  nums_add <- NULL; xid_add <- 1
+  xmat_add0 <- NULL
+  xmat_add <- NULL
+  xnms_add <- NULL
+  nums_add <- NULL
+  xid_add <- 1
   relaxes <- NULL
   block.ave.lst <- vector("list", length = (ncol(mf)-1))
   block.ord.lst <- vector("list", length = (ncol(mf)-1))
   cnms <- colnames(mf)
   for (i in 2:ncol(mf)) {
-    #if (is.numeric(attributes(mf[,i])$shape) && (attributes(mf[,i])$categ == "additive")) {
     if (is.numeric(attributes(mf[,i])$shape)) {
       labels <- c(labels, "additive")
       shapes_add <- c(shapes_add, attributes(mf[,i])$shape)
@@ -39,7 +48,6 @@ csvy <- function(formula, data, design, nD=NULL, family=gaussian, amat=NULL,
       }
       relaxes <- c(relaxes, reli)
       if (is.factor(mf[,i]) && is.character(levels(mf[,i]))) {
-        #some factor var will have more levels than observed groups
         xmat_add <- cbind(xmat_add, as.numeric(mf[,i]))
       } else {
         xmat_add <- cbind(xmat_add, mf[,i])
@@ -50,17 +58,13 @@ csvy <- function(formula, data, design, nD=NULL, family=gaussian, amat=NULL,
       
       block.ord.lst[[i-1]] <- -1
       block.ave.lst[[i-1]] <- -1
-      #print(i-1)
       if ((attributes(mf[,i])$categ == "block.ord")) {
         block.ord.lst[[i-1]] <- attributes(mf[,i])$order
-        #xid_ord <- xid_ord + 1
       }
       if ((attributes(mf[,i])$categ == "block.ave")) {
         block.ave.lst[[i-1]] <- attributes(mf[,i])$order
-        #xid_ave <- xid_ave + 1
       }
     } else if (is.null(attributes(mf[,i])$shape)) {
-      #new: if shape is NULL, then code it as 0
       block.ord.lst[[i-1]] <- -1
       block.ave.lst[[i-1]] <- -1
       reli <- attributes(mf[,i])$relax
@@ -74,60 +78,60 @@ csvy <- function(formula, data, design, nD=NULL, family=gaussian, amat=NULL,
       labels <- c(labels, "additive")
       xmat_add <- cbind(xmat_add, mf[,i])
       xmat_add0 <- cbind(xmat_add0, mf[,i])
-      #xnms_add <- c(xnms_add, attributes(mf[,i])$nm)
       xnms_add <- c(xnms_add, cnms[i])
       xid_add <- xid_add + 1
     }
   }
-  fit <- eval(call("csvy.fit", design = design, M = nD, relaxes = relaxes, xm = xmat_add, 
-                   sh = shapes_add, ynm = ynm, amat = amat, 
-                   block.ave.lst = block.ave.lst, block.ord.lst = block.ord.lst, 
-                   level = level, n.mix = n.mix, cl = cl, test = test, alpha = alpha))
-  rslt <- list(design = design, data = data, muhat = fit$muhat.s, muhat.un = fit$muhat.un, 
-               lwr = fit$lwr.s, upp = fit$upp.s, lwru = fit$lwru, uppu = fit$uppu, domain = fit$domain, domain.ord = fit$domain.ord, amat = fit$amat, 
-               grid = fit$grid, grid_ps = fit$grid_ps, nd = fit$nd, Ds = fit$Ds, cov.c = fit$cov.c, cov.un = fit$cov.un, ec = fit$ec, xmat_add = xmat_add, 
-               xmat_add0 = xmat_add0, xnms_add = xnms_add, shapes_add = shapes_add, ynm = ynm, zeros_ps = fit$zeros_ps, pval = fit$pval, CIC = fit$CIC)
-  rslt$call <- cl
-  class(rslt) <- "csvy"
-  return (rslt)
+  fit <- eval(call("csvy.fit", design = design, family = family, M = nD, 
+                   relaxes = relaxes, xm = xmat_add, xnms_add = xnms_add,
+                   sh = shapes_add, ynm = ynm, amat = amat,
+                   block.ave.lst = block.ave.lst, 
+                   block.ord.lst = block.ord.lst, 
+                   level = level, n.mix = n.mix, cl = cl, test = test))
+  fit$survey.design <- design
+  fit$data <- design$variables
+  fit$na.action <- attr(mf, "na.action")
+  fit$call <- cl
+  fit$family <- family
+  fit$n.mix <- n.mix
+  fit$terms <- mt
+  fit$xmat_add <- xmat_add 
+  fit$xmat_add0 <- xmat_add0
+  fit$xnms_add <- xnms_add
+  fit$shapes_add <- shapes_add
+  fit$ynm <- ynm
+  class(fit) <- c("csvy", "cgam", "svyglm", "glm")
+  return (fit)
 }
 
 ############
 ## csvy.fit#
 ############
-csvy.fit = function(design, M=NULL, relaxes=NULL, xm=NULL, sh=1, ynm=NULL, nd=NULL, 
-                    ID=NULL, block.ave.lst=NULL, block.ord.lst=NULL, amat=NULL, 
-                    additive=TRUE, level=0.95, n.mix=100L, cl=NULL, h_grid=NULL, test=TRUE, alpha=NULL,...){
+csvy.fit = function(design, family=stats::gaussian(), M=NULL, relaxes=NULL, 
+                    xm=NULL, xnms_add=NULL, sh=1, ynm=NULL, nd=NULL, 
+                    ID=NULL, block.ave.lst=NULL, block.ord.lst=NULL, 
+                    amat=NULL, level=0.95, n.mix=100L, cl=NULL, test=TRUE,...){
   #wp is population wt
   #Ds: observed domains?
   #make sure each column in xm is numeric:
   #xm = map_dbl(xm, .f = function(.x) as.numeric(.x))
-  #print (sh)
   bool = apply(xm, 2, function(x) is.numeric(x))
   if(any(!bool)){
     xm = apply(xm, 2, function(x) as.numeric(x))
   }
   Ds = apply(xm, 2, function(x) length(unique(x)))
   xm.red = unique(xm)
-  #xvs2 returns labeled domain names from 1 to max x
-  #cannot find the max domain id....
-  #experiment with parallel computing 
-  #no_of_cores = detectCores()
-  #cl = makeCluster(no_of_cores)
-  #apply is faster than parApply
-  #xvs2 = apply(xm.red, 2, function(x) 1:length(unique(x)))
   xvs2 = apply(xm.red, 2, function(x) sort(unique(x)))
-  #print (xvs2)
   if(is.matrix(xvs2)){
     grid2 = expand.grid(as.data.frame(xvs2))
   }else if(is.list(xvs2)){
     grid2 = expand.grid(xvs2)
   }
+  colnames(grid2) = xnms_add
   df = design$variables
   ds = design
   #sample sizes for each observed domain
   if(is.null(nd)){
-    #nd = apply(grid2, 1, function(gi){sum(apply(xm, 1, function(elem) all(elem == gi)))})
     xm.df = as.data.frame(xm)
     nd = aggregate(list(nd = rep(1, nrow(xm.df))), xm.df, length)$nd
   }
@@ -141,15 +145,12 @@ csvy.fit = function(design, M=NULL, relaxes=NULL, xm=NULL, sh=1, ynm=NULL, nd=NU
       ID = apply(xm, 1, function(elem) which(apply(grid2, 1, function(gi) all(gi == elem))))
     }
   }
-  #print (ID)
   ID = as.ordered(ID)
-  
   uds = unique(ID)
   domain.ord = order(uds)
   uds = sort(uds)
   #new M:
   obs_cells = as.numeric(levels(uds))[uds]
-  #print (obs_cells)
   #let user to define M?
   if (is.null(M)) {
     #some x won't start from 1:
@@ -158,46 +159,146 @@ csvy.fit = function(design, M=NULL, relaxes=NULL, xm=NULL, sh=1, ynm=NULL, nd=NU
   }
   #new: to be used in makeamat_2d_block
   M_0 = M
-  if (any(class(ds) == "survey.design")) {
+  #if (any(class(ds) == "survey.design")) {
+  if (inherits(ds, "survey.design")) {
     weights = 1/(ds$prob)
   }
-  if (any(class(ds) == "svyrep.design")) {
+  #if (any(class(ds) == "svyrep.design")) {
+  if (inherits(ds, "svyrep.design")) {
     weights = ds$pweights
   }
   #Nhat and stratawt will follow the order: 1 to M
   y = df[[ynm]]
+  #test:
+  if(family$family %in% c("binomial", "quasibinomial")){
+    uvals = unique(y)
+    if(length(uvals) > 2) {
+      stop("The response has more than 2 outcomes! family = binomial won't work!")
+    } else {
+      if(is.factor(y)){
+        ulvls = levels(y)
+        success = ulvls[2]
+        y = ifelse(y == success, 1, 0)
+      } 
+    }
+  }
   n = length(y)
   ys = stratawt = vector("list", length=M)
-  Nhat = nd = 1:M*0
+  #add ybar_vec for cic of non-gaussian cases
+  Nhat = nd = ybar_vec = 1:M*0
   #for (i in 1:M) {
-  for (udi in uds){
+  uds_num = as.numeric(levels(uds))[uds] 
+  #for (udi in uds){
+  for(udi in uds_num){
     #for(udi in obs_cells){
-    udi = as.numeric(udi)
+    #udi = uds[i]
+    #udi = as.numeric(udi)
+    #print (udi)
     ps = which(ID %in% udi)
     ysi = y[ps]
     wi = weights[ps]
     Nhi = sum(wi)
+    #new: change udi to which(uds%in%udi) in case udi = 0
+    #change which(uds%in%udi) back to udi (correct)
+    # Nhat[which(uds%in%udi)] = Nhi
+    # nd[which(uds%in%udi)] = length(wi)
+    # ys[[which(uds%in%udi)]] = ysi
+    # stratawt[[which(uds%in%udi)]] = wi
+    # ybar_vec[which(uds%in%udi)] = mean(ysi)
     Nhat[udi] = Nhi
     nd[udi] = length(wi)
     ys[[udi]] = ysi
     stratawt[[udi]] = wi
-    #print(c(udi, length(wi)))
+    ybar_vec[udi] = mean(ysi)
+    #print (udi)
   }
-  if (any(class(design) == "survey.design")) {
-    rds = as.svrepdesign(ds, type="JKn")
-  }
-  if (any(class(ds) == "svyrep.design")) {
-    rds = ds
-  }
+  #new:
+  obs_cells = which(nd > 0)
+  
+  #if(inherits(ds, "survey.design")){
+  #rds = as.svrepdesign(ds, type="JKn")
+  #change it to be auto to handle unstratified design
+  #    rds = as.svrepdesign(ds, type="auto")
+  #}
+  #if (inherits(ds, "svyrep.design")){ 
+  #    rds = ds
+  #}
   fo = as.formula(paste0("~", ynm))
+  #use fo2 for svyglm
+  xnms_add_fac = sapply(xnms_add, function(xnmi) paste0("factor(", xnmi, ")"))
+  #xnms_fo_fac = paste(xnms_add_fac, collapse = "+")
+  #check more!
+  xnms_fo_fac = paste(xnms_add_fac, collapse = "*")
+  fo2 = formula(paste(ynm, "~", xnms_fo_fac))
+  #new:
+  fo2_null = formula(paste(ynm, "~", 1))
+  xnms_fo = paste(xnms_add, collapse = "+")
+  #print (xnms_add_fac)
+  #print (fo2)
   # if (n > 1000){
   #   m.c = TRUE
   # } else {m.c = FALSE}
-  ans.unc = svyby(formula=fo, by=~ID, design=rds, FUN=svymean, covmat=TRUE, multicore=FALSE, drop.empty.groups=FALSE)
-  v1 = vcov(ans.unc)
-  yvecu = yvec = ans.unc[[ynm]]
-  vsu = diag(v1)
-  
+  #svyby is used when the response is normal; it returns domain mean estimates
+  #svyby is easier than svyglm?
+  #make.formula<-function(names) formula(paste("~",paste(names,collapse="+")))
+  #new:
+  if(family$family == "gaussian"){
+    #ans.unc = svyby(formula=fo, by=~ID, design=rds, FUN=svymean, covmat=TRUE, multicore=FALSE, drop.empty.groups=FALSE)
+    ans.unc = svyby(formula=fo, by=~ID, design=ds, FUN=svymean, covmat=TRUE, multicore=FALSE, drop.empty.groups=FALSE)
+    v1 = vcov(ans.unc)
+    etahatu = yvecu = yvec = ans.unc[[ynm]]
+    vsu = round(diag(v1), 5)
+    #print(ans.unc$prior.weights)
+    #temp: no prob for repeated design
+    #prior.weights = (1/ds$prob)/mean(1/ds$prob)
+    #ans.unc_null = svyglm(formula=fo2_null, design=rds, family=family)
+    ans.unc_null = svyglm(formula=fo2_null, design=ds, family=family)
+    prior.weights = ans.unc_null$prior.weights
+  } else {
+    #rds$variables$ID = ID
+    #ans.unc = svyglm(formula=y~-1+ID, design=rds, family=family) #correct for gaussian but wrong for other families
+    #v1 = vcov(ans.unc)
+    #etahatu = yvecu = yvec = as.numeric(ans.unc$coefficients)
+    #vsu = round(as.numeric(diag(v1)), 5)
+    #ans.unc = svyglm(formula=fo2, design=rds, family=family)
+    ans.unc = svyglm(formula=fo2, design=ds, family=family)
+    prior.weights = ans.unc$prior.weights
+    #print (ans.unc$prior.weights)
+    #create newdata
+    newdata = grid2
+    #colnames(newdata) = xnms_add
+    empty_cells = which(nd == 0)
+    # #predict.svyglm will ignore empty cells for 1D?
+    if(length(Ds) > 1 & length(empty_cells) > 0) {
+      #print (length(empty_cells))
+      newdata = newdata[-empty_cells, ,drop=FALSE]
+    }
+    
+    if(length(empty_cells) == 0){
+      p.unc = predict(ans.unc, newdata, se.fit = TRUE, type = 'link', vcov = TRUE)
+      v1 = vcov(p.unc)
+      etahatu = yvecu = yvec = as.data.frame(p.unc)$link
+      vsu = round(diag(v1), 5)
+    }
+    
+    if(length(empty_cells) > 0){
+      tt = delete.response(terms(formula(ans.unc)))
+      mf = model.frame(tt, data = newdata)
+      mm = model.matrix(tt, mf)
+      #modified from predict.svrepglm
+      mm = mm[, -empty_cells]
+      vv = mm %*% vcov(ans.unc) %*% t(mm)
+      v1 = vv
+      etahatu = yvecu = yvec = NULL
+      etahatu = drop(mm %*% coef(ans.unc))
+      yvecu = etahatu
+      yvec = etahatu
+      vsu = round(diag(v1), 5)
+    }
+  }
+  z.mult = qnorm((1 - level)/2, lower.tail=FALSE)
+  lwru = yvecu - z.mult*sqrt(vsu)
+  uppu = yvecu + z.mult*sqrt(vsu)
   #new: replace n=1 variance with the average
   #not to change vsu, which will be used for 
   ps = which(round(diag(v1), 7) == 0L)
@@ -230,32 +331,15 @@ csvy.fit = function(design, M=NULL, relaxes=NULL, xm=NULL, sh=1, ynm=NULL, nd=NU
       noord_cells = noord_cells[[1]]
     }
   }
-  #print (empty_cells)
   ne = length(empty_cells)
   nd_ne = nd[empty_cells]
-  #if (length(block.ave.lst) == 0 & length(block.ord.lst) == 0) {
-  #new: impute for n=1 cells 
-  #new: re-compute the variance for n=2...10 cells
   small_cells = which(nd >= 1 & nd <= 10)
   nsm = length(small_cells)
-  #new: leave nd = 1 alone....
-  #empty_cells = which(nd == 0)
-  #observed sample size in cells with 0 or 1 n
-  #} else {ne = 0; nsm = 0}
-  
-  #zeros_ps = empty_cells
-  #zeros = ne
   zeros = ones = 0
   zeros_ps = NULL
-  
+  #print (nd)
+  #print (ne)
   if(ne >= 1){
-    #ignore nd == 1 now
-    #if (any(nd == 1)) {
-    #  ones_ps = which(nd == 1)
-    #  ones = length(ones_ps)
-    #  yvec_ones = yvec[which(obs_cells %in% ones_ps)]
-    #  Nhat_ones = Nhat[which(obs_cells %in% ones_ps)]
-    #} 
     if (any(nd == 0)) {
       zeros_ps = which(nd == 0)
       zeros = length(zeros_ps)
@@ -277,6 +361,7 @@ csvy.fit = function(design, M=NULL, relaxes=NULL, xm=NULL, sh=1, ynm=NULL, nd=NU
   wt = diag(w)
   wtinv = diag(1/w)
   hkeep = NULL
+  amat_0 = NULL #to be used in Nd > 1
   if (is.null(amat)) {
     if (Nd == 1) {
       #sh = 0 means user must define amat 
@@ -293,13 +378,6 @@ csvy.fit = function(design, M=NULL, relaxes=NULL, xm=NULL, sh=1, ynm=NULL, nd=NU
           #print ('a')
           block.ord = block.ord.lst[[1]]
         }
-        #print (block.ord)
-        #amat = makeamat(1:M, sh=sh, Ds=M, interp=TRUE, relaxes=FALSE, block.ave=block.ave, block.ord=block.ord)
-        #ans.polar = coneA(yvec, amat, w=w)
-        #muhat = round(ans.polar$thetahat, 10)
-        
-        #relaxed monotone is not fully debugged
-        #print (relaxes)
         if (relaxes) {
           #amats = makeamat(1:M, sh=sh, Ds=M, interp=TRUE, relaxes=relaxes)
           if (is.null(h_grid)) {
@@ -349,8 +427,6 @@ csvy.fit = function(design, M=NULL, relaxes=NULL, xm=NULL, sh=1, ynm=NULL, nd=NU
           #ps = max(index)
           #try the 4th largest
           ps = (sort(index, decreasing = TRUE))[4]
-          #print (index)
-          #print (ps)
           #choose amat_h 
           amat = amats[[ps]]
           hkeep = h_grid[ps]
@@ -378,11 +454,13 @@ csvy.fit = function(design, M=NULL, relaxes=NULL, xm=NULL, sh=1, ynm=NULL, nd=NU
       #temp:
       if (any(sh > 0)) {
         #if (!relaxes) {
+        #print (zeros_ps)
         amat = makeamat_2D(x=NULL, sh=sh, grid2=grid2, xvs2=xvs2,
                            zeros_ps=zeros_ps, noord_cells=noord_cells, 
                            Ds=Ds, interp=TRUE, 
                            block.ave.lst=block.ave.lst,
                            block.ord.lst=block.ord.lst, M_0=M_0)
+        #print (dim(amat))
         #to be used in impute_2 or impute_3
         amat_0 = makeamat_2D(x=NULL, sh=sh, grid2=grid2, xvs2=xvs2,
                              zeros_ps=NULL, noord_cells=noord_cells, 
@@ -392,29 +470,18 @@ csvy.fit = function(design, M=NULL, relaxes=NULL, xm=NULL, sh=1, ynm=NULL, nd=NU
       } else if (all(sh == 0) & is.null(amat)) {
         stop ("User must define a constraint matrix!")
       }
-      #temp:
-      #if (!is.null(zeros_ps)) {
-      #  amat = amat[, -zeros_ps, drop=FALSE]
-      #}
-      #} else {
-      #   n_h = 60
-      #   amats = vector("list", length = n_h)
-      #   h_grid = seq(0.01, 6, length = n_h)
-      #   for (h in h_grid) {
-      #     amat = makeamat_2D(x=NULL, sh=sh, Ds=Ds, interp=TRUE, relaxes=relaxes, h=h) 
-      #     amats[[h]] = amat
-      #   }
-      # }
     }
   }
   
   #new: check irreducibility of amat
-  
   if (!is.null(amat)) {
     ans.polar = coneA(yvec, amat, w=w, msg=FALSE)
-    muhat = round(ans.polar$thetahat, 10)
-    #print (muhat[,1])
+    etahat = round(ans.polar$thetahat, 10)
+    #new
+    #muhat = etahat 
     face = ans.polar$face
+    #new: to be used in summary and anova
+    edf = 1.5*ans.polar$df
     if (length(face) == 0){
       mat = wt %*% v1
     } else {
@@ -423,47 +490,48 @@ csvy.fit = function(design, M=NULL, relaxes=NULL, xm=NULL, sh=1, ynm=NULL, nd=NU
       pmat_is = wtinvdd %*% solve(dd %*% wtinvdd) %*% dd
       mat = wt %*% (imat - pmat_is) %*% v1
     }
-    evec = yvec - muhat
-    CIC = t(evec) %*% wt %*% evec + 2*(sum(diag(mat)))
-    CIC = as.numeric(CIC)
+    #evec = yvec - muhat
+    if(family$family == "gaussian"){
+      evec = yvec - etahat
+      CIC = t(evec) %*% wt %*% evec + 2*(sum(diag(mat)))
+      CIC = as.numeric(CIC)
+      #new: add CIC.un
+      CIC.un = 2*(sum(diag(wt %*% v1)))
+      CIC.un = as.numeric(CIC.un)
+    }else{
+      #check for empty cells
+      evec = ybar_vec[which(nd != 0)] - c(family$linkinv(etahat))
+      CIC = t(evec) %*% wt %*% evec + 2*(sum(diag(mat)))
+      CIC = as.numeric(CIC)
+      CIC.un = 2*(sum(diag(wt %*% v1)))
+      CIC.un = as.numeric(CIC.un)
+    }
   }
-  #print(dim(muhat))
-  lwr = upp = NULL
+  
   acov = v1
-  dp = -t(amat)
-  dp = apply(dp, 2, function(e) e / (sum(e^2))^(.5))
-  # M is revised if there's empty cell
-  if(n.mix >= 1){
-    #M = M-zeros
+  if(is.integer(n.mix) & n.mix > 0){
+    #get the constrained variance-covariance matrix
+    lwr = upp = NULL
+    acov = v1
+    dp = -t(amat)
+    dp = apply(dp, 2, function(e) e / (sum(e^2))^(.5))
+    
     m_acc = M 
     sector = NULL
     times = NULL
     df.face = NULL
     iter = 1
-    #vms = list()
     obs = 1:M
-    
-    #not finished: v1_tmp
-    #if (!is.null(zeros_ps) & Nd >= 2) {
-    #  v1_tmp = matrix(0, nrow = M_0, ncol = M_0)
-    #  v1_tmp[-zeros_ps,-zeros_ps] = v1
-    #  ysims = MASS::mvrnorm(n.mix, mu=muhat, Sigma=v1_tmp)
-    #} else {
-    ysims = MASS::mvrnorm(n.mix, mu=muhat, Sigma=v1)
-    #}
+    #ysims = MASS::mvrnorm(n.mix, mu=muhat, Sigma=v1)
+    #n.mix = 100
+    #binomial can use mvrnorm?
+    ysims = MASS::mvrnorm(n.mix, mu=etahat, Sigma=v1)
     for (iloop in 1:n.mix) {
       #ysim is the group mean
       #new:
       ysim = ysims[iloop, ]
-      
-      #temp
-      #if (!is.null(zeros_ps) & Nd >= 2) {
-      #  ansi = coneA(ysim, amat, w=w_0) 
-      #} else {
       ansi = coneA(ysim, amat, w=w, msg=FALSE)
-      #}
-      muhati = round(ansi$thetahat, 10)
-      
+      etahati = round(ansi$thetahat, 10)
       facei = ansi$face
       if (length(facei) == 0) {
         next
@@ -489,6 +557,7 @@ csvy.fit = function(design, M=NULL, relaxes=NULL, xm=NULL, sh=1, ynm=NULL, nd=NU
     }
     
     if (!is.null(df.face)) {
+      imat = diag(M)
       sm_id = which((df.face[,2]/n.mix) < 1e-3)
       if (any(sm_id)) {
         df.face = df.face[-sm_id, ,drop=FALSE]
@@ -498,137 +567,52 @@ csvy.fit = function(design, M=NULL, relaxes=NULL, xm=NULL, sh=1, ynm=NULL, nd=NU
       bsec = df.face
       bsec[,2] = bsec[,2] / sum(bsec[,2])
       
-      #temp
-      # if (!is.null(zeros_ps) & Nd >= 2) {
-      #   acov = matrix(0, nrow=M_0, ncol=M_0)
-      #   wtinv_vec = 1/w
-      #   #wtinv_vec[zeros_ps] = 1e-3
-      #   wtinv = diag(wtinv_vec)
-      #   imat = diag(M_0)
-      #   
-      #   for(is in 1:nsec) {
-      #     if (bsec[is,2] > 0) {
-      #       jvec = sector[is, ]
-      #       smat = dp[,which(jvec==1),drop=FALSE]
-      #       wtinvs = wtinv %*% smat
-      #       pmat_is_p = wtinvs %*% solve(crossprod(smat, wtinvs)) %*% t(smat)
-      #       pmat_is = (imat-pmat_is_p)
-      #       #}
-      #       acov = acov + bsec[is,2]*pmat_is%*%v1_tmp%*%t(pmat_is)
-      #     }
-      #   }
-      # } else {
       acov = matrix(0, nrow=M, ncol=M)
-      
+      wtinv = diag(1/w)
       for(is in 1:nsec) {
-        #if (bsec[is,2] > 0) {
         jvec = sector[is, ]
-        #if (sum(jvec) == 0) {
-        #  pmat_is = imat
-        #} else {
         smat = dp[,which(jvec==1),drop=FALSE]
-        #print (t(smat))
         wtinvs = wtinv %*% smat
         pmat_is_p = wtinv %*% smat %*% solve(t(smat) %*% wtinv %*% smat) %*% t(smat)
-        #pmat_is_p = wtinvs %*% solve(crossprod(smat, wtinvs)) %*% t(smat)
         pmat_is = (imat-pmat_is_p)
-        #}
         acov = acov + bsec[is,2]*pmat_is%*%v1%*%t(pmat_is)
-        #}
       }
-      #}
     } else {
-      #if (n.mix >= 1 & det(v1) < -1e-10) {
-      #  warning("'Sigma' is not positive definite and simulations cannot be done!")
-      #}
       acov = v1
     }
-    #z.mult = qnorm((1 - level)/2, lower.tail=FALSE)
-    z.mult = 2
-    # #temp
-    # if (!is.null(zeros_ps) & Nd >= 2) {
-    #   vsc = diag(acov)
-    #   hl = z.mult*sqrt(vsc)
-    # 
-    #   lwr = muhat_tmp - hl
-    #   upp = muhat_tmp + hl
-    #   lwr = lwr[-zeros_ps]
-    #   upp = upp[-zeros_ps]
-    #   
-    #   vsc = vsc[-zeros_ps]
-    #   hl = hl[-zeros_ps]
-    #   #muhat = muhat[-zeros_ps]
-    #   yvec = yvec[-zeros_ps]
-    #   w = w[-zeros_ps]
-    #   
-    # } else {
+    z.mult = qnorm((1 - level)/2, lower.tail=FALSE)
+    #z.mult = 2
     vsc = diag(acov)
     hl = z.mult*sqrt(vsc)
-    lwr = muhat - hl
-    upp = muhat + hl
-    #}
-  }
-  # if (n.mix >= 1 & det(v1) <= 1e-30) {
-  #   #warning("'Sigma' is not positive definite and simulations cannot be done!")
-  #   acov = v1
-  #   #z.mult = qnorm((1 - level)/2, lower.tail=FALSE)
-  #   z.mult = 2
-  #   vsc = diag(acov)
-  #   hl = z.mult*sqrt(vsc)
-  #   lwr = muhat - hl
-  #   upp = muhat + hl
-  # }
-  #new: if n.mix = 0, then use the faces for the final projection of the real y
-  if (n.mix == 0L) {
-    vmat = qr.Q(qr(t(amat)), complete = TRUE)[, -(1:(qr(t(amat))$rank)), drop = FALSE]
-    pmat_is = vmat %*% solve(crossprod(vmat), t(vmat))
-    acov = wtinv^(.5)%*%pmat_is%*%wt^(.5)%*%v1%*%wt^(.5)%*%pmat_is%*%wtinv^(.5)
-    #z.mult = qnorm((1 - level)/2, lower.tail=FALSE)
-    z.mult = 2
-    vsc = diag(acov)
+    lwr = etahat - hl
+    upp = etahat + hl
+  }  else {
+    z.mult = qnorm((1 - level)/2, lower.tail=FALSE)
+    #z.mult = 2
+    vsc = diag(v1)
     hl = z.mult*sqrt(vsc)
-    lwr = muhat - hl
-    upp = muhat + hl
-  }
-  muhatu = yvecu
-  #if (length(empty_cells) >= 1) {
-  #if (zeros >= 1) {
-  #  muhatu = muhatu[-zeros]
-  #}
-  #z.mult = qnorm((1 - level)/2, lower.tail=FALSE)
-  z.mult = 2
-  hl = z.mult*sqrt(vsu)
-  lwru = muhatu - hl
-  uppu = muhatu + hl
-  
-  #new: if there's empty cells, just augment muhatu to include NA's
-  muhatu_all = lwru_all = uppu_all = 1:(M+zeros)*0
-  muhatu_all[zeros_ps] = NA
-  muhatu_all[obs_cells] = muhatu
-  muhatu = muhatu_all
-  
-  lwru_all[zeros_ps] = NA
-  lwru_all[obs_cells] = lwru
-  lwru = lwru_all
-  
-  uppu_all[zeros_ps] = NA
-  uppu_all[obs_cells] = uppu
-  uppu = uppu_all
-  
-  #for monotone only: to find the c.i. for empty/1 cells by using smallest L and largest U of neighbors
-  #print (domain.ord)
-  #new: create grid2 again because the routines to do imputation need to have each x start from 1
-  xvs2 = apply(xm.red, 2, function(x) 1:length(unique(x)))
-  if(is.matrix(xvs2)){
-    grid2 = expand.grid(as.data.frame(xvs2))
-  }else if(is.list(xvs2)){
-    grid2 = expand.grid(xvs2)
+    lwr = etahat - hl
+    upp = etahat + hl
   }
   if (ne >= 1) {
-    #print (ne)
-    ans_im = impute_em2(empty_cells, obs_cells, M=(M+zeros), yvec, Nd, nd, Nhat, w, 
-                        domain.ord, grid2, Ds, sh, muhat, lwr, upp, vsc, amat_0)
-    muhat = ans_im$muhat
+    #etahatu = yvecu
+    #new: if there's empty cells, just augment muhatu to include NA's
+    etahatu_all = 1:(M+zeros)*0
+    etahatu_all[zeros_ps] = NA
+    etahatu_all[obs_cells] = etahatu
+    etahatu = etahatu_all
+    #for monotone only: to find the c.i. for empty/1 cells by using smallest L and largest U of neighbors
+    #new: create grid2 again because the routines to do imputation need to have each x start from 1
+    xvs2 = apply(xm.red, 2, function(x) 1:length(unique(x)))
+    if(is.matrix(xvs2)){
+      grid2 = expand.grid(as.data.frame(xvs2))
+    }else if(is.list(xvs2)){
+      grid2 = expand.grid(xvs2)
+    }
+    #revise later: replace lwru with lwr etc
+    ans_im = impute_em2(empty_cells, obs_cells, M=(M+zeros), etahatu, Nd, nd, Nhat, w, 
+                        domain.ord, grid2, Ds, sh, etahat, lwr=lwr, upp=upp, vsc=vsc, amat_0)
+    etahat = ans_im$muhat
     lwr = ans_im$lwr
     upp = ans_im$upp
     vsc = ans_im$vsc
@@ -640,20 +624,19 @@ csvy.fit = function(design, M=NULL, relaxes=NULL, xm=NULL, sh=1, ynm=NULL, nd=NU
   if (Nd >= 1 & nsm >= 1) {
     new_obs_cells = sort(unique(c(empty_cells, obs_cells)))
     if(Nd == 1){
-      ans_im2 = impute_em2(small_cells, new_obs_cells, M=(M+zeros), yvec, 
-                           Nd, nd, Nhat, w, domain.ord, grid2, Ds, sh, muhat, lwr, upp, vsc, amat_0)
-      #lwr = ans_im2$lwr
-      #upp = ans_im2$upp
+      #ans_im2 = impute_em2(small_cells, new_obs_cells, M=(M+zeros), etahatu,
+      #                     Nd, nd, Nhat, w, domain.ord, grid2, Ds, sh, etahat, 
+      #                     lwr, upp, vsc, amat_0)
+      ans_im2 = impute_em2(small_cells, new_obs_cells, M=(M+zeros), etahatu,
+                           Nd, nd, Nhat, w, domain.ord, grid2, Ds, sh, etahat, lwr, upp, 
+                           vsc, amat_0)
       sig2 = ans_im2$vsc
     }
-    #if(Nd >= 2 & any(nd > 10)){
     if(Nd >= 2){
-      ans_im2 = impute_em3(small_cells, M=(M+zeros), yvec, Nd, nd, Nhat, w, domain.ord,
-                           grid2, Ds, sh, muhat, lwr, upp, vsc, new_obs_cells, amat_0)
+      ans_im2 = impute_em3(small_cells, M=(M+zeros), etahatu, Nd, nd, Nhat, w, domain.ord,
+                           grid2, Ds, sh, etahat, lwr, upp, vsc, new_obs_cells, amat_0)
       sig2 = ans_im2$vsc
     }
-    #muhat = ans_im$muhat
-    #domain.ord = ans_im$domain.ord
   }
   
   vsc_mix = sig1
@@ -669,7 +652,8 @@ csvy.fit = function(design, M=NULL, relaxes=NULL, xm=NULL, sh=1, ynm=NULL, nd=NU
     vsc_mix_imp = 1:l_imp_ps*0
     #tmp:
     if(Nd > 1){
-      nbors_lst_0 = fn_nbors_2(small_cells, amat_0, muhat)
+      nbors_lst_0 = fn_nbors_2(small_cells, amat_0, etahat)
+      #nbors_lst_0 = fn_nbors_2(small_cells, amat_0, muhat)
     }
     
     k_sm = 1 
@@ -683,10 +667,12 @@ csvy.fit = function(design, M=NULL, relaxes=NULL, xm=NULL, sh=1, ynm=NULL, nd=NU
         min_ps = nbors_lst_0$nb_lst_mins[[k_sm]]
         #max_ps = min_ps = NULL
         if(length(max_ps)>0){
-          mu_max = muhat[max_ps]
+          mu_max = etahat[max_ps]
+          #mu_max = muhat[max_ps]
         }
         if(length(min_ps)>0){
-          mu_min = muhat[min_ps]
+          mu_min = etahat[min_ps]
+          #mu_min = muhat[min_ps]
         } 
         k_sm = k_sm + 1
       } else if (Nd == 1 | ndek == 0) {
@@ -698,40 +684,41 @@ csvy.fit = function(design, M=NULL, relaxes=NULL, xm=NULL, sh=1, ynm=NULL, nd=NU
       if(length(min_ps) == 0 | length(max_ps) == 0) {
         varek = s1k
       } else {
-        if(!is.null(alpha)){
-          if(0 <= alpha & 1 >= alpha){
-            varek = s1k*alpha + s2k*(1-alpha)
-          }else{
-            warning("alpha must be between 0 and 1!")
-          }
-        }else{
-          if(ndek == 0){
-            #varek = s1k
-            varek = s2k
-          } else if (ndek == 1) {
-            varek = s1k*.2 + s2k*.8
-          } else if(ndek == 2 | ndek == 3){
-            varek = s1k*.3 + s2k*.7
-          }else if(ndek == 4 | ndek == 5){
-            varek = s1k*.6 + s2k*.4
-          }else if(ndek == 6 | ndek == 7){
-            varek = s1k*.6 + s2k*.4
-          }else if(ndek == 8 | ndek == 9 | ndek == 10){
-            varek = s1k*.8 + s2k*.2
-          }
-        }
+        if(ndek == 0){
+          #varek = s1k
+          varek = s2k
+        } else if (ndek == 1) {
+          varek = s1k*.2 + s2k*.8
+        } else if(ndek == 2 | ndek == 3){
+          varek = s1k*.3 + s2k*.7
+        }else if(ndek == 4 | ndek == 5){
+          varek = s1k*.6 + s2k*.4
+        }else if(ndek == 6 | ndek == 7){
+          varek = s1k*.6 + s2k*.4
+        }else if(ndek == 8 | ndek == 9 | ndek == 10){
+          varek = s1k*.8 + s2k*.2
+        }#else if(ndek == 10){
+        #  varek = s1k*.8 + s2k*.2
+        #}
       }
       vsc_mix_imp[k] = varek 
     }
     vsc_mix[imp_ps] = vsc_mix_imp
   }
+  
   hl = z.mult*sqrt(vsc_mix)
-  lwr = muhat - hl
-  upp = muhat + hl
+  lwr = etahat - hl
+  upp = etahat + hl
+  
+  vscu = diag(v1)
+  hlu = z.mult*sqrt(vscu)
+  lwru = etahatu - hlu
+  uppu = etahatu + hlu
   
   #new: test of H_0: theta in V and H_1: theta in C
   #do lsq fit with Atheta = 0 to get fit under H0
   #use the 1st option to compute T1 and T2
+  bval = NULL
   pval = NULL
   if(test){
     m = qr(amat)$rank
@@ -746,20 +733,16 @@ csvy.fit = function(design, M=NULL, relaxes=NULL, xm=NULL, sh=1, ynm=NULL, nd=NU
     evals = eans$values
     sm = 1e-7
     
+    #need test more
     #neg_ps = which(evals < sm)
     #if(length(neg_ps) > 0){
     #  evals[neg_ps] = sm
     #}
     L = evecs %*% diag(sqrt(evals))
-    Linv = ginv(L) #give weird T2 when v1 is singular
-    Linv = solve(L)
+    #Linv = ginv(L) #give weird T2 when v1 is singular
+    Linv = solve(L) #solve will give singular error message when n is small
     atil = amat %*% L
     Z_s = Linv %*% yvecu
-    
-    #umat = chol(v1) #not work if v1 is singular
-    #uinv = solve(umat)
-    #atil = amat %*% umat 
-    #Z_s = uinv %*% yvecu
     
     theta_hat = coneA(Z_s, atil, msg=FALSE)$thetahat
     T2_hat = t(Z_s-theta_hat) %*% (Z_s-theta_hat)
@@ -784,93 +767,134 @@ csvy.fit = function(design, M=NULL, relaxes=NULL, xm=NULL, sh=1, ynm=NULL, nd=NU
       pval = 1 - sum(pbeta(bval, m:0/2, 0:m/2)*mdist)
     } else {pval = 1}
   }
-  #print (pval)
+  #set h_grid = NULL for now
+  h_grid = NULL
+  muhat = c(family$linkinv(etahat))
+  muhat.un = c(family$linkinv(etahatu))
+  muhat_all = 1:n*0
+  etahat_all = 1:n*0
+  #new: for null deviance of gaussian case
+  #ybar_all = 1:n*0
+  for (udi in uds){
+    udi = as.numeric(udi)
+    ps = which(ID %in% udi)
+    #should use muhat, not etahat
+    muhat_all[ps] = muhat[which(uds%in%udi)]
+    etahat_all[ps] = etahat[which(uds%in%udi)]
+    #ybar_all[ps] = ybar_vec[which(uds%in%udi)]
+  }
+  #weights or prior.weights?
+  #prior.weights seems correct
+  deviance = sum(family$dev.resids(y, muhat_all, prior.weights))
+  #CIC = t(evec) %*% wt %*% evec + 2*(sum(diag(mat)))
+  #same as CIC:
+  #for gaussian: -2loglike = nlog(t(evec) %*% wt %*% evec)
+  #for binomial: yvec is not 0-1, and it doesn't work, then the penalty won't match
+  #logLike_CIC = sum(family$dev.resids(yvec, muhat, diag(wt))) + 2*(sum(diag(mat)))
+  logLike_CIC = deviance + 2*(sum(diag(mat)))
+  ans = new.env()
+  #revise later: about domain.ord
+  ans$linear.predictors = etahat_all
+  ans$etahat = c(etahat)
+  ans$linear.predictors.un = ans.unc$linear.predictors
+  ans$etahatu = c(yvecu)
+  ans$fitted.values = muhat_all
+  ans$muhat = muhat
+  ans$fitted.values.un = ans.unc$fitted.values
+  ans$muhatu = muhat.un
+  ans$cov.un = v1 #unconstrained cov
+  ans$cov.unscaled = vsc_mix #constrained cov with imputation
+  if(n.mix == 0L){
+    ans$acov = v1
+  } else {
+    ans$acov = acov #mixture variance-covariance without imputation
+  }
+  if(family$family == "gaussian"){
+    ans$null.deviance = ans.unc_null$deviance
+    #ans$null.deviance = sum(family$dev.resids(y, mean(y), prior.weights))
+    #ans$null.deviance = sum(family$dev.resids(y, ybar_all, prior.weights))
+  }else{
+    ans$null.deviance = ans.unc$null.deviance
+  }
+  ans$df.null = n - 1
+  ans$deviance = deviance
+  ans$df.residual = n - edf
+  ans$edf = edf 
+  ans$lwr = c(lwr)
+  ans$upp = c(upp)
+  #if(n.mix > 0L){
+  #  ans$lwr.with.grid = cbind(lwr, grid2)
+  #  ans$upp.with.grid = cbind(upp, grid2)
+  #}
+  ans$lwru = c(lwru)
+  ans$uppu = c(uppu)
+  #ans$lwru.with.grid = cbind(lwru, grid2)
+  #ans$uppu.with.grid = cbind(uppu, grid2)
+  ans$y = y
   ID = as.numeric(levels(ID))[ID] 
-  ans = list(muhat = muhat[domain.ord], muhat.s = muhat, muhat.un = muhatu, 
-             lwr = lwr[domain.ord], upp = upp[domain.ord], lwr.s = lwr, 
-             upp.s = upp, lwru = lwru, uppu = uppu, domain = ID, 
-             grid_ps = pskeep, amat = amat, Ds = Ds, domain.ord = domain.ord, 
-             nd = nd, grid = grid2, cov.un = vcov(ans.unc), cov.c = vsc_mix,
-             ec = empty_cells, hkeep = hkeep, h_grid = h_grid, zeros_ps=zeros_ps, 
-             pval=pval, CIC=CIC)
-  class(ans) = "csvy"
+  ans$domain = ID
+  ans$grid_ps = pskeep
+  ans$amat = amat
+  ans$Ds = Ds
+  ans$domain.ord = domain.ord
+  ans$nd = nd
+  ans$grid = grid2
+  ans$ec = empty_cells
+  ans$hkeep = hkeep
+  ans$h_grid = h_grid
+  ans$zeros_ps = zeros_ps
+  ans$pval = pval
+  ans$bval = bval
+  ans$CIC = CIC
+  ans$CIC.un = CIC.un
+  ans$logLike_CIC = logLike_CIC
+  ans$w = w
+  ans$xm.red = xm.red
+  ans$ne = ne
+  ans$empty_cells = empty_cells
+  ans$small_cells = small_cells
+  ans$obs_cells = obs_cells
+  ans$zeros = zeros
+  ans$Nd = Nd
+  ans$Nhat = Nhat
+  ans$amat_0 = amat_0
+  #very little difference between weights and prior.weights?
+  ans$weights = weights
+  ans$prior.weights = prior.weights
+  #ans$etahat.with.grid = cbind(etahat, grid2)
+  #ans$etahatu.with.grid = cbind(etahatu, grid2)
+  #ans$muhat.with.grid = cbind(muhat, grid2)
+  #ans$muhatu.with.grid = cbind(muhat.un, grid2)
   return (ans)
 }
 
 ####################################
-#apply plotpersp on a csvy.fit object
+#inherit from cgam
+#apply plotpersp to a csvy.fit object
 #####################################
-plotpersp <- function(object, x1 = NULL, x2 = NULL,...) {
-  x1nm <- deparse(substitute(x1))
-  x2nm <- deparse(substitute(x2))
-  #print (x1nm)
-  #print (x2nm)
-  if (inherits(object, "cgamp")) {
-    xnms_add <- object$object$xnms_add
-  } else { #cgam and csvy
-    xnms_add <- object$xnms_add
-  }
-  if (inherits(object, "wpsp")) {
-    xnms_wp <- object$object$xnms_wp
-  } else {
-    xnms_wp <- object$xnms_wp
-  }
-  if (inherits(object, "trisplp")) {
-    xnms_tri <- object$object$xnms_tri
-  } else {
-    xnms_tri <- object$xnms_tri
-  }
-  is_add <- all(c(any(grepl(x1nm, xnms_add, fixed = TRUE)), any(grepl(x2nm, xnms_add, fixed = TRUE))))
-  #print (is_add)
-  is_wps <- all(c(any(grepl(x1nm, xnms_wp, fixed = TRUE)), any(grepl(x2nm, xnms_wp, fixed = TRUE))))
-  #print (is_wps)
-  is_tri <- all(c(any(grepl(x1nm, xnms_tri, fixed = TRUE)), any(grepl(x2nm, xnms_tri, fixed = TRUE))))
-  #print (is_tri)
-  if (missing(x1) | missing(x2)) {
-    UseMethod("plotpersp")
-  } else {
-    cs = class(object)
-    if (length(cs) == 1 & is.null(x1nm) & is.null(x2nm)) {
-      UseMethod("plotpersp")
-    } else {
-      #if (is_wps) {
-      #print (x1)
-      #print (x2nm)
-      #  if (inherits(object, "wpsp")) {
-      #print (x1nm)
-      #print (x2nm)
-      #print (head(x1))
-      #    plotpersp.wpsp(object, x1, x2, x1nm, x2nm,...)
-      #  } else {
-      #    plotpersp.wps(object, x1, x2, x1nm, x2nm,...)
-      #  }
-      #} else if (is_add) {
-      #  if (inherits(object, "cgamp")){
-      #    plotpersp.cgamp(object, x1, x2, x1nm, x2nm,...)
-      #  } else if (inherits(object, "cgam")){
-      #    plotpersp.cgam(object, x1, x2, x1nm, x2nm,...)
-      #  } else if (inherits(object, "csvy")){
-      plotpersp.csvy(object, x1, x2, x1nm, x2nm,...)
-      #  }
-      #} else if (is_tri) {
-      #  if (inherits(object, "trisplp")) {
-      #    plotpersp.trisplp(object, x1, x2, x1nm, x2nm,...)
-      #  } else {
-      #    plotpersp.trispl(object, x1, x2, x1nm, x2nm,...)
-      #  }
-      #} else {
-      #  stop ("Nonparametric components must be from the same class!")
-      #}
-    }
-  }
-}
+#plotpersp <- function(object,...) {
+  #x1nm <- deparse(substitute(x1))
+  #x2nm <- deparse(substitute(x2))
+#  UseMethod("plotpersp", object)
+#}
 
 ####################################
 plotpersp.csvy = function(object, x1=NULL, x2=NULL, x1nm=NULL, x2nm=NULL, data=NULL, ci="none",
                           transpose=FALSE, main=NULL, categ=NULL, categnm=NULL, 
-                          col="white", cex.main=.8, xlab=NULL, 
+                          surface = c("C","U"), type = c("link", "response"),
+                          col = "white", cex.main=.8, xlab=NULL, 
                           ylab=NULL, zlab=NULL, zlim=NULL, box=TRUE,
-                          axes=TRUE, th=NULL, ltheta=NULL, ticktype="detailed", nticks=5, palette=NULL, NCOL=NULL,...) {
+                          axes=TRUE, th=NULL, ltheta=NULL, 
+                          ticktype="detailed", nticks=5, palette=NULL, NCOL=NULL,...) {
+  x1nm = deparse(substitute(x1))
+  x2nm = deparse(substitute(x2))
+  #print (x1nm)
+  #print (x2nm)
+  #print (quote(x1))
+  #print (quote(x2))
+  #print (class(quote(x1)))
+  type = match.arg(type)
+  surface = match.arg(surface)
   if (!inherits(object, "csvy")) {
     warning("calling plotpersp(<fake-csvy-object>) ...")
   }
@@ -889,9 +913,6 @@ plotpersp.csvy = function(object, x1=NULL, x2=NULL, x1nm=NULL, x2nm=NULL, data=N
   #muhat = object$muhat.s
   #lwr = object$lwr.s
   #upp = object$upp.s
-  muhat = object$muhat
-  lwr = object$lwr
-  upp = object$upp
   xnms = object$xnms_add
   xmat = object$xmat_add
   bool = apply(xmat, 2, function(x) is.numeric(x))
@@ -911,14 +932,44 @@ plotpersp.csvy = function(object, x1=NULL, x2=NULL, x1nm=NULL, x2nm=NULL, data=N
   nd = object$nd
   ec = object$ec
   data = object$data
+  #new: for more families
+  family = object$family
+  #muhat = object$muhat
+  etahat = object$etahat
+  lwr = object$lwr #for eta
+  upp = object$upp #for eta
+  main = ifelse(is.null(main), "Constrained Fit", main)
   
+  switch(surface, U = {
+    etahat = object$etahatu
+    lwr = object$lwru
+    upp = object$uppu
+    main = "Unconstrained Fit"
+  }, C = )
+  
+  #print (range(etahat))
+  switch(type, response = {
+    etahat = family$linkinv(etahat)
+    lwr = family$linkinv(lwr)
+    upp = family$linkinv(upp)
+  }, link = )
+  #etahat = switch(type, link = etahat, response = object$family$linkinv(etahat))
+  #lwr = switch(type, link = lwr, response = object$family$linkinv(lwr))
+  #upp = switch(type, link = upp, response = object$family$linkinv(upp))
+  #print (range(etahat))
+  
+  #print (type)
   knms = length(xnms)
   obs = 1:knms
-  if (is.null(x1nm) && is.null(x2nm)) {
+  #print (length(x1nm))
+  #print (is.null(x2nm))
+  if (x1nm == "NULL" | x2nm == "NULL") {
+    #if (is.null(x1nm) | is.null(x2nm)) {
     if (length(xnms) >= 2) {
       if (is.null(categ)) {
         x1nm = xnms[1]
         x2nm = xnms[2]
+        #print (x1nm)
         x1id = 1
         x2id = 2
       } else {
@@ -984,7 +1035,12 @@ plotpersp.csvy = function(object, x1=NULL, x2=NULL, x1nm=NULL, x2nm=NULL, data=N
     ylab = x2nm
   }
   if (is.null(zlab)) {
-    zlab = paste("Est mean of", ynm)
+    if("response" %in% type){
+      zlab = paste("Est mean of", ynm)
+    } 
+    if("link" %in% type){
+      zlab = paste("Est systematic component of", ynm)
+    }
   }
   
   D1 = Ds[x1id]
@@ -1015,7 +1071,7 @@ plotpersp.csvy = function(object, x1=NULL, x2=NULL, x1nm=NULL, x2nm=NULL, data=N
         ps_id = intersect(ps_id, ps_idi)
       }
       domain_id = unique(dm[ps_id])
-      muhat_use = muhat[domain_id]
+      etahat_use = etahat[domain_id]
       upp_use = upp[domain_id]
       lwr_use = lwr[domain_id]
     } else {
@@ -1067,16 +1123,16 @@ plotpersp.csvy = function(object, x1=NULL, x2=NULL, x1nm=NULL, x2nm=NULL, data=N
           ps_id_iz = intersect(ps_id, ps_idi)
           domain_id = unique(dm[ps_id_iz])
           dms[[iz]] = domain_id
-          muhat_use = muhat[domain_id]
-          surfs[[iz]] = muhat_use
-          mins = c(mins, min(muhat_use))
-          maxs = c(maxs, max(muhat_use))
+          etahat_use = etahat[domain_id]
+          surfs[[iz]] = etahat_use
+          mins = c(mins, min(etahat_use))
+          maxs = c(maxs, max(etahat_use))
         }
       } else {print(paste(categ, "is not an exact character name defined in the csurvey fit!"))}
     }
   } else {
     domain_id = unique(dm)
-    muhat_use = muhat
+    etahat_use = etahat
     upp_use = upp
     lwr_use = lwr
   }
@@ -1087,12 +1143,12 @@ plotpersp.csvy = function(object, x1=NULL, x2=NULL, x1nm=NULL, x2nm=NULL, data=N
       upp_use = upp
       lwr_use = lwr
       rg = max(upp_use, na.rm = TRUE) - min(lwr_use, na.rm = TRUE)
-      z.lwr = min(muhat_use, na.rm = TRUE) - rg/5
-      z.upp = max(muhat_use, na.rm = TRUE) + rg/5
+      z.lwr = min(etahat_use, na.rm = TRUE) - rg/3
+      z.upp = max(etahat_use, na.rm = TRUE) + rg/3
     } else if (ci == 'none') {
-      rg = max(muhat_use, na.rm = TRUE) - min(muhat_use, na.rm = TRUE)
-      z.lwr = min(muhat_use, na.rm = TRUE) - rg/5
-      z.upp = max(muhat_use, na.rm = TRUE) + rg/5
+      rg = max(etahat_use, na.rm = TRUE) - min(etahat_use, na.rm = TRUE)
+      z.lwr = min(etahat_use, na.rm = TRUE) - rg/3
+      z.upp = max(etahat_use, na.rm = TRUE) + rg/3
     }
   } else {
     z.lwr = min(mins, na.rm = TRUE)
@@ -1131,7 +1187,7 @@ plotpersp.csvy = function(object, x1=NULL, x2=NULL, x1nm=NULL, x2nm=NULL, data=N
         #new: some x won't start from 1
         ps1 = which(ux1 %in% rid[1])
         ps2 = which(ux2 %in% rid[2])
-        surf1[ps1, ps2] = muhat_use[di]
+        surf1[ps1, ps2] = etahat_use[di]
         #surf1[rid[1], rid[2]] = muhat_use[di]
         if(!is.null(upp)&&!is.null(lwr)){
           surf2[ps1, ps2] = upp_use[di]
@@ -1146,7 +1202,7 @@ plotpersp.csvy = function(object, x1=NULL, x2=NULL, x1nm=NULL, x2nm=NULL, data=N
         #new: some x won't start from 1
         ps1 = which(ux1 %in% rid[1])
         ps2 = which(ux2 %in% rid[2])
-        surf1[ps1, ps2] = muhat_use[which(domain_id %in% di)]
+        surf1[ps1, ps2] = etahat_use[which(domain_id %in% di)]
         #surf1[rid[1], rid[2]] = muhat_use[which(domain_id %in% di)]
         if(!is.null(upp)&&!is.null(lwr)){
           surf2[ps1, ps2] = upp_use[which(domain_id %in% di)]
@@ -1160,13 +1216,13 @@ plotpersp.csvy = function(object, x1=NULL, x2=NULL, x1nm=NULL, x2nm=NULL, data=N
     #empty cell: test 3D
     if (length(ec) >= 1) {
       if (knms == 1 | knms == 2) {
-        surf1[ec] = muhat_use[ec]
+        surf1[ec] = etahat_use[ec]
         if(!is.null(upp) && !is.null(lwr)){
           surf2[ec] = upp_use[ec]
           surf3[ec] = lwr_use[ec]
         }
       } else if (knms >= 3) {
-        surf1[which(domain_id %in% ec)] = muhat_use[which(domain_id %in% ec)]
+        surf1[which(domain_id %in% ec)] = etahat_use[which(domain_id %in% ec)]
         if(!is.null(upp) && !is.null(lwr)){
           surf2[which(domain_id %in% ec)] = upp_use[which(domain_id %in% ec)]
           surf3[which(domain_id %in% ec)] = lwr_use[which(domain_id %in% ec)]
@@ -1174,8 +1230,8 @@ plotpersp.csvy = function(object, x1=NULL, x2=NULL, x1nm=NULL, x2nm=NULL, data=N
       }
     }
     #suggested by cran: not to change users' setting
-    oldpar <- par(no.readonly = TRUE)  
-    on.exit(par(oldpar))    
+    #oldpar = par(no.readonly = TRUE)  
+    #on.exit(par(oldpar))    
     if (ci == "none") {
       persp(x1p, x2p, surf1, zlim = zlim0, col=col, xlab = xlab, ylab = ylab, zlab = zlab, main = main, theta = ang, ltheta = -135, ticktype = ticktype, box=box, axes=axes, nticks=nticks)
       par(new=FALSE)
@@ -1283,7 +1339,6 @@ plotpersp.csvy = function(object, x1=NULL, x2=NULL, x1nm=NULL, x2nm=NULL, data=N
   #par(new=FALSE)
 }
 
-
 #########################################
 #subroutines for confidence interval
 #########################################
@@ -1333,33 +1388,33 @@ getbin = function(num, capl) {
 #eight shape functions
 #add constr for the user-defined amat case
 ##############################################
-constr <- function(x, numknots = 0, knots = 0, space = "E")
-{
-  cl <- match.call()
-  pars <- match.call()[-1]
-  attr(x, "nm") <- deparse(pars$x)
-  attr(x, "shape") <- 0
-  attr(x, "numknots") <- numknots
-  attr(x, "knots") <- knots
-  attr(x, "space") <- space
-  attr(x, "categ") <- "additive"
-  #class(x) <- "additive"
-  x
-}
+# constr <- function(x, numknots = 0, knots = 0, space = "E")
+# {
+#   cl <- match.call()
+#   pars <- match.call()[-1]
+#   attr(x, "nm") <- deparse(pars$x)
+#   attr(x, "shape") <- 0
+#   attr(x, "numknots") <- numknots
+#   attr(x, "knots") <- knots
+#   attr(x, "space") <- space
+#   attr(x, "categ") <- "additive"
+#   #class(x) <- "additive"
+#   x
+# }
 
-incr <- function(x, numknots = 0, knots = 0, space = "E")
-{
-  cl <- match.call()
-  pars <- match.call()[-1]
-  attr(x, "nm") <- deparse(pars$x)
-  attr(x, "shape") <- 1
-  attr(x, "numknots") <- numknots
-  attr(x, "knots") <- knots
-  attr(x, "space") <- space
-  attr(x, "categ") <- "additive"
-  #class(x) <- "additive"
-  x
-}
+# incr <- function(x, numknots = 0, knots = 0, space = "E")
+# {
+#   cl <- match.call()
+#   pars <- match.call()[-1]
+#   attr(x, "nm") <- deparse(pars$x)
+#   attr(x, "shape") <- 1
+#   attr(x, "numknots") <- numknots
+#   attr(x, "knots") <- knots
+#   attr(x, "space") <- space
+#   attr(x, "categ") <- "additive"
+#   #class(x) <- "additive"
+#   x
+# }
 
 #relaxed increasing
 # relax.incr <- function(x, numknots = 0, knots = 0, space = "E")
@@ -1377,20 +1432,19 @@ incr <- function(x, numknots = 0, knots = 0, space = "E")
 #   x
 # }
 
-
-decr <- function(x, numknots = 0, knots = 0, space = "E")
-{
-  cl <- match.call()
-  pars <- match.call()[-1]
-  attr(x, "nm") <- deparse(pars$x)
-  attr(x, "shape") <- 2
-  attr(x, "numknots") <- numknots
-  attr(x, "knots") <- knots
-  attr(x, "space") <- space
-  attr(x, "categ") <- "additive"
-  #class(x) <- "additive"
-  x
-}
+# decr <- function(x, numknots = 0, knots = 0, space = "E")
+# {
+#   cl <- match.call()
+#   pars <- match.call()[-1]
+#   attr(x, "nm") <- deparse(pars$x)
+#   attr(x, "shape") <- 2
+#   attr(x, "numknots") <- numknots
+#   attr(x, "knots") <- knots
+#   attr(x, "space") <- space
+#   attr(x, "categ") <- "additive"
+#   #class(x) <- "additive"
+#   x
+# }
 
 #relaxed decreasing
 # relax.decr <- function(x, numknots = 0, knots = 0, space = "E")
@@ -1520,11 +1574,6 @@ block.Ave <- function(x, order = NULL, numknots = 0, knots = 0, space = "E")
   attr(x, "order") <- order
   #class(x) <- "additive"
   x
-}
-
-fitted.csvy <- function(object,...) {
-  ans <- object$muhat
-  return(ans)
 }
 
 ######
@@ -1776,6 +1825,7 @@ makeamat = function(x, sh, Ds = NULL, suppre = FALSE, interp = FALSE,
   #return (amat)
 }
 
+
 ######
 #>=2D
 ######
@@ -1809,7 +1859,7 @@ makeamat_2D = function(x=NULL, sh, grid2=NULL, xvs2=NULL, zeros_ps=NULL, noord_c
             if (any((zeros_ps %% D1) == 0)) {
               zeros_ps_at_cts = zeros_ps[which((zeros_ps %% D1) == 0)]
               cts_add = row_id[sapply(zeros_ps_at_cts, function(elem) max(which(row_id < elem)))]
-              cts = sort(c(cts, cts_add))
+              cts = unique(sort(c(cts, cts_add)))
             }
             obs = 1:nrow(grid3)
             for (i in 1:length(cts)) {
@@ -2032,7 +2082,8 @@ makeamat_2D = function(x=NULL, sh, grid2=NULL, xvs2=NULL, zeros_ps=NULL, noord_c
         if(any((zeros_ps %% D1) == 0)){
           zeros_ps_at_cts = zeros_ps[which((zeros_ps %% D1) == 0)]
           cts_add = row_id[sapply(zeros_ps_at_cts, function(elem) max(which(row_id < elem)))]
-          cts = sort(c(cts, cts_add))
+          #cts = sort(c(cts, cts_add))
+          cts = unique(sort(c(cts, cts_add)))
         }
         obs = 1:nrow(grid3)
         
@@ -2314,6 +2365,7 @@ makeamat_2d = function(x=NULL, sh, nr2, nc2, gap, D1=NULL, D2, Ds = NULL, suppre
   #rslt
 }
 
+
 ################################################################
 #local function to be called in makeamat_2D for block ordering
 ################################################################
@@ -2536,18 +2588,6 @@ makeamat_2d_block = function(x=NULL, sh, block.ave = NULL, block.ord = NULL, zer
   }
 }
 
-###############
-#print method
-###############
-print.csvy = function(x, ...) 
-{
-  print(x$family)
-  cat("Call:\n")
-  print(x$call)
-  cat("\n")
-  print(x$design)
-  invisible(x)
-}
 
 #########################
 #empty cell imputation 
@@ -2713,6 +2753,7 @@ impute_em2 = function(empty_cells, obs_cells, M, yvec, Nd, nd, Nhat, w, domain.o
     #w_all[empty_cells] = we
     # 
     domain.ord_all[obs_cells] = domain.ord
+    #domain.ord_all[which(nd > 0)] = domain.ord
     domain.ord_all[empty_cells] = domain.ord_em
     # 
     if (!is.null(muhat)) {
@@ -2760,7 +2801,9 @@ impute_em2 = function(empty_cells, obs_cells, M, yvec, Nd, nd, Nhat, w, domain.o
       nbors_k_mins = nbors_lst_0$nb_lst_mins[[k]]
       em_k = empty_cells[k]
       
-      if(length(nbors_k_mins) > 0 | length(nbors_k_maxs) > 0){
+      #revised: nbors_k_mins and nbors_k_maxs must be in obs_cells
+      #if(length(nbors_k_mins) > 0 | length(nbors_k_maxs) > 0){
+      if(length(nbors_k_mins) > 0 & any(nbors_k_mins %in% obs_cells) | length(nbors_k_maxs) > 0 & any(nbors_k_maxs %in% obs_cells)){
         max_ps = min_ps = NULL
         if(length(nbors_k_maxs)>0){
           mu_max = max(muhat[obs_cells %in% nbors_k_maxs])
@@ -2824,7 +2867,10 @@ impute_em2 = function(empty_cells, obs_cells, M, yvec, Nd, nd, Nhat, w, domain.o
       } else {
         #ye = c(ye, rev(ye)[1])
         #we = c(we, rev(we)[1])
-        
+        #need to test more
+        if(!is.null(rev(domain.ord_em)[1])){
+          domain.ord_em = c(domain.ord_em, rev(domain.ord_em)[1])
+        }
         if (!is.null(muhat)) {
           muhate = c(muhate, rev(muhate)[1])
         }
@@ -2866,6 +2912,7 @@ impute_em2 = function(empty_cells, obs_cells, M, yvec, Nd, nd, Nhat, w, domain.o
   #rslt = list(ps = ps, ns = ns, muhat = muhat, lwr = lwr, upp = upp, domain.ord = domain.ord, yvec = yvec, w = w)
   return(rslt)
 }
+
 
 ###############################
 #subrountine to find nbors (>=2D)
@@ -2973,11 +3020,10 @@ fn_nbors = function(empty_grids, grid2, mins, maxs){
   return (nb_lst)
 }
 
+
 ####################################################################################
 #compute the variance for n=2...10 cells
 #keep muhat, only compute weighted variance
-#n=0 and 1: 100%; n=2,3 90%; n=4,5 70%; n=6,7, 50%; n=8,9 30% n=10, 10%
-#Nd=2 only, Nd=1 coverage rate is good?
 ####################################################################################
 impute_em3 = function(small_cells, M, yvec, Nd, nd, Nhat, w, domain.ord, grid2, 
                       Ds=NULL, sh=NULL, muhat=NULL, lwr=NULL, upp=NULL, 
@@ -3045,6 +3091,7 @@ impute_em3 = function(small_cells, M, yvec, Nd, nd, Nhat, w, domain.ord, grid2,
   return(rslt)
 }
 
+
 ###############################
 #subrountine to find nbors (>=2D)
 ###############################
@@ -3058,7 +3105,9 @@ fn_nbors_2 = function(small_cells, amat, muhat){
     col_ptk = amat[, ptk]
     rows_ps = which(col_ptk != 0)
     amat_sub = amat[rows_ps, ,drop=FALSE]
-    nbors_k = apply(amat_sub, 1, function(.x) which(.x != 0)) %>% as.vector() %>% unique() 
+    #nbors_k = apply(amat_sub, 1, function(.x) which(.x != 0)) %>% as.vector() %>% unique() 
+    nbors_k = apply(amat_sub, 1, function(.x) which(.x != 0))
+    nbors_k = unique(as.vector(nbors_k))
     nbors_k = nbors_k[-which(nbors_k == ptk)]
     #1: min candidates; -1: max candidates
     sgn_nbors_k = col_ptk[which(col_ptk != 0)]
@@ -3097,12 +3146,19 @@ fn_nbors_3 = function(empty_cells, amat_0, muhat){
     col_ptk = amat_0[, ptk]
     rows_ps = which(col_ptk != 0)
     amat_sub = amat_0[rows_ps, ,drop=FALSE]
-    nbors_k = apply(amat_sub, 1, function(.x) which(.x != 0)) %>% as.vector() %>% unique() 
+    #nbors_k = apply(amat_sub, 1, function(.x) which(.x != 0)) %>% as.vector() %>% unique() 
+    nbors_k = apply(amat_sub, 1, function(.x) which(.x != 0))
+    nbors_k = unique(as.vector(nbors_k))
     nbors_k = nbors_k[-which(nbors_k == ptk)]
     #1: min candidates; -1: max candidates
     sgn_nbors_k = col_ptk[which(col_ptk != 0)]
     nbors_k_mins = nbors_k[sgn_nbors_k == 1]
     nbors_k_maxs = nbors_k[sgn_nbors_k == -1]
+    
+    #new: need to remove empty_cells from nbors_k_maxs and nbors_k_mins
+    nbors_k_mins = setdiff(nbors_k_mins, empty_cells)
+    nbors_k_maxs = setdiff(nbors_k_maxs, empty_cells)
+    
     if(length(nbors_k_maxs) > 0){
       nbors_k_maxs = nbors_k_maxs[which(muhat[nbors_k_maxs] == max(muhat[nbors_k_maxs]))]
     }
@@ -3167,7 +3223,8 @@ fn_nbors_3 = function(empty_cells, amat_0, muhat){
   if (nm_maxs > 0) {
     for(i in 1:length(to_merge_maxs)) {
       ps = to_merge_maxs[[i]]
-      nbors_ps_maxs = unlist(nb_lst_maxs[ps]) %>% unique()
+      #nbors_ps_maxs = unlist(nb_lst_maxs[ps]) %>% unique()
+      nbors_ps_maxs = unique(unlist(nb_lst_maxs[ps]))
       rm_id2_maxs = NULL
       for(h in 1:length(nbors_ps_maxs)) {
         nbh = nbors_ps_maxs[h]
@@ -3199,7 +3256,8 @@ fn_nbors_3 = function(empty_cells, amat_0, muhat){
   if (nm_mins > 0) {
     for(i in 1:length(to_merge_mins)) {
       ps = to_merge_mins[[i]]
-      nbors_ps_mins = unlist(nb_lst_mins[ps]) %>% unique()
+      #nbors_ps_mins = unlist(nb_lst_mins[ps]) %>% unique()
+      nbors_ps_mins = unique(unlist(nb_lst_mins[ps]))
       rm_id2_mins = NULL
       for(h in 1:length(nbors_ps_mins)) {
         nbh = nbors_ps_mins[h]
@@ -3230,4 +3288,439 @@ fn_nbors_3 = function(empty_cells, amat_0, muhat){
   
   rslt = list(nb_lst_maxs=nb_lst_maxs, nb_lst_mins=nb_lst_mins)
   return (rslt)
+}
+
+
+############
+#fitted.csvy
+############
+fitted.csvy <- function(object,...)
+{
+  ans <- object$muhat
+  ans
+}
+
+
+##############
+#confint.csvy
+##############
+confint.csvy <- function(object, parm=NULL, level = 0.95, type = c("link", "response"),...)
+{
+  type <- match.arg(type)
+  n.mix <- object$n.mix
+  if(n.mix <= 0L){
+    stop("confint function only works when n.mix is a positive integer!")
+  }else{
+    z.mult <- qnorm((1 - level)/2, lower.tail = FALSE)
+    #vs <- vcov(object)
+    vs <- object$cov.unscaled
+    lwr <- object$etahat - z.mult*sqrt(vs)
+    upp <- object$etahat + z.mult*sqrt(vs)
+    
+    lwr <- switch(type, link = lwr, response = object$family$linkinv(lwr))
+    upp <- switch(type, link = upp, response = object$family$linkinv(upp))
+    
+    ci.bands <- as.data.frame(do.call(cbind, list(lwr, upp)))
+    #learn from confint.svyglm:
+    a <- (1 - level)/2
+    a <- c(a, 1 - a)
+    pct <- paste0(format(100 * a, trim = TRUE,
+                         scientific = FALSE, digits = 3),  "%")
+    colnames(ci.bands) <- pct
+    return (ci.bands)
+  }
+}
+
+
+###############
+#print method
+###############
+print.csvy <- function(x, ...) 
+{
+  #print(x$family)
+  print(x$survey.design)
+  cat("\n")
+  cat("Call:\n")
+  print(x$call)
+  cat("\n")
+  if(!is.null(x$deviance)) {
+    cat("Null deviance: ", round(x$null.deviance,4), "", "on", x$df.null, "", "degrees of freedom", "\n")
+    cat("Residual deviance: ", round(x$deviance,4), "", "on", x$df.residual, "", "observed degrees of freedom", "\n")
+  }
+  if (!is.null(x$CIC)) {
+    cat("CIC: ", round(x$CIC,4))
+  }
+  invisible(x)
+}
+
+###################################################################################
+#extract mixture variance-covariance matrix
+###################################################################################
+vcov.csvy <- function(object,...) {
+  #v = diag(x$cov.unscaled)
+  #v = x$cov.unscaled
+  v <- object$acov
+  return(v)
+}
+
+#############################################
+#return etahat: systematic component
+#############################################
+coef.csvy <- function(object,...){
+  coefs <- object$etahat
+  #temp:
+  names(coefs) <- paste("domain", 1:length(coefs), sep=" ")
+  return(coefs)
+}
+
+
+#############################################
+#summary for csvy
+#############################################
+summary.csvy <- function(object,...) {
+  family <- object$family
+  CIC <- object$CIC
+  CIC.un <- object$CIC.un
+  deviance <- object$deviance
+  null.deviance <- object$null.deviance
+  bval <- object$bval
+  pval <- object$pval
+  #edf
+  df.residual <- object$df.residual
+  df.null <- object$df.null
+  edf <- object$edf
+  tms <- object$terms
+  rslt <- NULL
+  if (!is.null(pval)) {
+    #rslt = data.frame("edf" = round(resid_df_obs, 4), "mixture of Beta" = round(bval, 4), "p.value" = round(pval, 4))
+    #same as cgam:
+    rslt <- data.frame("edf" = round(edf, 4), "mixture of Beta" = round(bval, 4), "p.value" = round(pval, 4))
+    #check?
+    rownames(rslt) <- rev((attributes(tms)$term.labels))[1]
+    structure(list(call = object$call, coefficients = rslt, CIC = CIC, CIC.un = CIC.un, df.null = df.null, df.residual = df.residual,
+                   null.deviance = null.deviance, deviance = deviance, family = family), class = "summary.csvy")
+    
+    #structure(list(call = object$call, coefficients = rslt, CIC = CIC, df.residual = df.residual,
+    #               null.deviance = null.deviance, deviance = deviance, family = family), class = "summary.csvy")
+    #ans = list(call = x$call, coefficients = rslt, CIC = CIC, 
+    #           null.deviance = null.deviance, deviance = deviance, 
+    #           family = family)
+    #class(ans) = "summary.csvy"
+    #ans
+  } else {
+    warning("summary function for a csvy object only works when test = TRUE!")
+  }
+}
+
+#####################
+#print.summary.csvy#
+#####################
+print.summary.csvy = function(x,...) {
+  cat("Call:\n")
+  print(x$call)
+  cat("\n")
+  cat("Null deviance: ", round(x$null.deviance, 4), "", "on", x$df.null, "", "degrees of freedom", "\n")
+  cat("Residual deviance: ", round(x$deviance, 4), "", "on", x$df.residual, "", "observed degrees of freedom", "\n")
+  if (!is.null(x$coefficients)) {
+    cat("\n")
+    cat("Approximate significance of constrained fit: \n")
+    printCoefmat(x$coefficients, P.values = TRUE, has.Pvalue = TRUE)
+  }
+  if (!is.null(x$CIC)) {
+    cat("CIC (constrained estimator): ", round(x$CIC, 4))
+    cat("\n")
+    cat("CIC (unconstrained estimator): ", round(x$CIC.un, 4))
+  }
+}
+
+
+##############
+#predict.csvy#
+##############
+predict.csvy = function(object, newdata=NULL, type=c("link","response"), 
+                        se.fit=TRUE, level=0.95, n.mix=100,...)
+{
+  family = object$family
+  type = match.arg(type)
+  if (!inherits(object, "csvy")) { 
+    warning("calling predict.csvy(<fake-csvy-object>) ...")
+  }
+  #match newdata with grid
+  xnms_add = object$xnms_add
+  grid2 = object$grid
+  colnames(grid2) = xnms_add
+  #add colnames in the object?
+  if (missing(newdata) || is.null(newdata)) {
+    newdata = grid2
+  }
+  if (!is.data.frame(newdata)) {
+    stop ("newdata must be a data frame!")	
+  }
+  #learnt from predict.svyglm:
+  #if (type=="terms")
+  #  return(predterms(object,se=se.fit,...))
+  #make it simpler?
+  if(ncol(newdata) == 1){
+    ps = apply(newdata, 1, function(elem) grid2[which(apply(grid2, 1, function(gi) all(gi == elem))),])
+  }
+  if(ncol(newdata) > 1){
+    ps0 = sapply(colnames(newdata), function(elem) which(sapply(colnames(grid2), function(gi) all(gi == elem))))
+    #order the column in case the user doesn't define the variables as the order used in the formula
+    newdata = newdata[, as.numeric(ps0)]
+    ps = apply(newdata, 1, function(elem) which(apply(grid2, 1, function(gi) all(gi == elem))))
+  }
+  
+  etahat = object$etahat 
+  vsc_mix = object$cov.unscaled
+  
+  #interval = match.arg(interval)
+  if(!se.fit) {
+    fit = etahat[ps]
+    fit = switch(type, link = fit, response = object$family$linkinv(fit))
+    return (fit)
+  } else {
+    #when n.mix = 0, then there is no vsc_mix
+    if(is.null(vsc_mix)) {
+      ynm = object$ynm
+      amat = object$amat
+      nd = object$nd
+      M = length(nd)
+      muhat = object$muhat
+      #add in csvy
+      #revise later: etahat.s
+      etahatu = object$etahatu
+      w = object$w
+      v1 = object$cov.un
+      domain.ord = object$domain.ord
+      #move the imputation code to be in predict.csvy
+      xm.red = object$xm.red
+      ne = object$ne
+      xvs2 = apply(xm.red, 2, function(x) 1:length(unique(x)))
+      zeros_ps = empty_cells = object$empty_cells
+      small_cells = object$small_cells
+      obs_cells = object$obs_cells
+      nsm = length(small_cells)
+      zeros = object$zeros
+      Nhat = object$Nhat
+      Ds = object$Ds
+      sh = object$shapes_add
+      amat_0 = object$amat_0
+      Nd = object$Nd
+      
+      lwr = upp = NULL
+      acov = v1
+      dp = -t(amat)
+      dp = apply(dp, 2, function(e) e / (sum(e^2))^(.5))
+      
+      M = M - zeros
+      m_acc = M
+      sector = NULL
+      times = NULL
+      df.face = NULL
+      iter = 1
+      obs = 1:M
+      #ysims = MASS::mvrnorm(n.mix, mu=muhat, Sigma=v1)
+      n.mix = 100
+      #binomial can use mvrnorm?
+      #etahat returned from object has been imputed
+      if(length(empty_cells) > 0){
+        etahat = etahat[-empty_cells]
+      }
+      ysims = MASS::mvrnorm(n.mix, mu=etahat, Sigma=v1)
+      for (iloop in 1:n.mix) {
+        #ysim is the group mean
+        #new:
+        ysim = ysims[iloop, ]
+        ansi = coneA(ysim, amat, w=w, msg=FALSE)
+        etahati = round(ansi$thetahat, 10)
+        facei = ansi$face
+        if (length(facei) == 0) {
+          next
+        } else {
+          sec = 1:nrow(amat)*0
+          sec[facei] = 1
+          
+          r = makebin(sec) + 1
+          if (iter == 1) {
+            df.face = rbind(df.face, c(r, 1))
+            sector = rbind(sector, sec)
+          } else {
+            if (r %in% df.face[,1]) {
+              ps = which(df.face[,1] %in% r)
+              df.face[ps,2] = df.face[ps,2] + 1
+            } else {
+              df.face = rbind(df.face, c(r, 1))
+              sector = rbind(sector, sec)
+            }
+          }
+          iter = iter+1
+        }
+      }
+      
+      if (!is.null(df.face)) {
+        imat = diag(M)
+        sm_id = which((df.face[,2]/n.mix) < 1e-3)
+        if (any(sm_id)) {
+          df.face = df.face[-sm_id, ,drop=FALSE]
+          sector = sector[-sm_id, ,drop=FALSE]
+        }
+        nsec = nrow(df.face)
+        bsec = df.face
+        bsec[,2] = bsec[,2] / sum(bsec[,2])
+        
+        acov = matrix(0, nrow=M, ncol=M)
+        wtinv = diag(1/w)
+        for(is in 1:nsec) {
+          jvec = sector[is, ]
+          smat = dp[,which(jvec==1),drop=FALSE]
+          wtinvs = wtinv %*% smat
+          pmat_is_p = wtinv %*% smat %*% solve(t(smat) %*% wtinv %*% smat) %*% t(smat)
+          pmat_is = (imat-pmat_is_p)
+          acov = acov + bsec[is,2]*pmat_is%*%v1%*%t(pmat_is)
+        }
+      } else {
+        acov = v1
+      }
+      z.mult = qnorm((1 - level)/2, lower.tail=FALSE)
+      #z.mult = 2
+      vsc = diag(acov)
+      hl = z.mult*sqrt(vsc)
+      lwr = loweta = etahat - hl
+      upp = uppeta = etahat + hl
+      
+      vscu = diag(v1)
+      hlu = z.mult*sqrt(vscu)
+      lwru = lowetau = etahatu - hlu
+      uppu = uppetau = etahatu + hlu
+      
+      if(is.matrix(xvs2)){
+        grid2 = expand.grid(as.data.frame(xvs2))
+      }else if(is.list(xvs2)){
+        grid2 = expand.grid(xvs2)
+      }
+      
+      if (ne >= 1) {
+        #muhatu = yvecu
+        #new: if there's empty cells, just augment muhatu to include NA's
+        etahatu_all = 1:(M+zeros)*0
+        etahatu_all[zeros_ps] = NA
+        etahatu_all[obs_cells] = etahatu
+        etahatu = etahatu_all
+        
+        ans_im = impute_em2(empty_cells, obs_cells, M=(M+zeros), etahatu, Nd, nd, Nhat, w,
+                            domain.ord, grid2, Ds, sh, etahat, lwr, upp, vsc, amat_0)
+        #ans_im = with(object, impute_em2(empty_cells, obs_cells, M=(M+zeros), etahatu, Nd, nd, Nhat, w,
+        #                    domain.ord, grid2, Ds, sh, etahat, lwr, upp, vsc, amat_0))
+        etahat = ans_im$muhat
+        lwr = ans_im$lwr
+        upp = ans_im$upp
+        vsc = ans_im$vsc
+        domain.ord = ans_im$domain.ord
+      }
+      
+      sig1 = vsc
+      sig2 = NULL
+      if (Nd >= 1 & nsm >= 1) {
+        new_obs_cells = sort(unique(c(empty_cells, obs_cells)))
+        if(Nd == 1){
+          ans_im2 = impute_em2(small_cells, new_obs_cells, M=(M+zeros), etahatu,
+                               Nd, nd, Nhat, w, domain.ord, grid2, Ds, sh, etahat,
+                               lwr, upp, vsc, amat_0)
+          #ans_im2 = with(object, impute_em2(small_cells, new_obs_cells, M=(M+zeros), etahatu,
+          #         Nd, nd, Nhat, w, domain.ord, grid2, Ds, sh, etahat, lwr, upp, vsc, amat_0))
+          sig2 = ans_im2$vsc
+        }
+        if(Nd >= 2){
+          ans_im2 = impute_em3(small_cells, M=(M+zeros), etahatu, Nd, nd, Nhat, w, domain.ord,
+                               grid2, Ds, sh, etahat, lwr, upp, vsc, new_obs_cells, amat_0)
+          sig2 = ans_im2$vsc
+        }
+      }
+      
+      vsc_mix = sig1
+      vsc_mix_imp = NULL
+      if (Nd >= 1 & nsm >= 1) {
+        imp_ps = sort(c(zeros_ps, small_cells))
+        nd_imp_ps = nd[imp_ps]
+        l_imp_ps = length(nd_imp_ps)
+        
+        sig1_imp = sig1[imp_ps]
+        sig2_imp = sig2[imp_ps]
+        
+        vsc_mix_imp = 1:l_imp_ps*0
+        #tmp:
+        if(Nd > 1){
+          nbors_lst_0 = fn_nbors_2(small_cells, amat_0, muhat)
+        }
+        
+        k_sm = 1
+        for(k in 1:l_imp_ps){
+          ndek = nd_imp_ps[k]
+          s1k = sig1_imp[k]
+          s2k = sig2_imp[k]
+          #tmp
+          if(Nd > 1 & ndek > 0){
+            max_ps = nbors_lst_0$nb_lst_maxs[[k_sm]]
+            min_ps = nbors_lst_0$nb_lst_mins[[k_sm]]
+            #max_ps = min_ps = NULL
+            if(length(max_ps)>0){
+              mu_max = muhat[max_ps]
+            }
+            if(length(min_ps)>0){
+              mu_min = muhat[min_ps]
+            }
+            k_sm = k_sm + 1
+          } else if (Nd == 1 | ndek == 0) {
+            min_ps = max_ps = 1
+          }
+          
+          #when min_ps or max_ps = NULL: kth cell is in a 2D case, small cell, at the edge of the
+          #grid and there is only one constraint in amat
+          if(length(min_ps) == 0 | length(max_ps) == 0) {
+            varek = s1k
+          } else {
+            if(ndek == 0){
+              #varek = s1k
+              varek = s2k
+            } else if (ndek == 1) {
+              varek = s1k*.2 + s2k*.8
+            } else if(ndek == 2 | ndek == 3){
+              varek = s1k*.3 + s2k*.7
+            }else if(ndek == 4 | ndek == 5){
+              varek = s1k*.6 + s2k*.4
+            }else if(ndek == 6 | ndek == 7){
+              varek = s1k*.6 + s2k*.4
+            }else if(ndek == 8 | ndek == 9 | ndek == 10){
+              varek = s1k*.8 + s2k*.2
+            }#else if(ndek == 10){
+            #  varek = s1k*.8 + s2k*.2
+            #}
+          }
+          vsc_mix_imp[k] = varek
+        }
+        vsc_mix[imp_ps] = vsc_mix_imp
+      }
+    }
+    #eta = etahat[ps]; se = vsc[ps]
+    #learnt from predict.svyglm:
+    z.mult = qnorm((1 - level)/2, lower.tail=FALSE)
+    fit = etahat[ps]
+    se.fit = sqrt(vsc_mix[ps])
+    lwr = etahat[ps] - z.mult*se.fit
+    upp = etahat[ps] + z.mult*se.fit
+    
+    fit = switch(type, link = fit, response = object$family$linkinv(fit))
+    lwr = switch(type, link = lwr, response = object$family$linkinv(lwr))
+    upp = switch(type, link = upp, response = object$family$linkinv(upp))
+    se.fit = switch(type, link = se.fit, response = object$family$linkinv(se.fit))
+    
+    #no unconstrained:...
+    if(type=='link'){
+      ans = list(fit = fit, lwr = lwr, upp = upp, se.fit = se.fit)
+    }
+    if(type=='response'){
+      ans = list(fit = fit, lwr = lwr, upp = upp)
+    }
+  }
+  return (ans)
 }

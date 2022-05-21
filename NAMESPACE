@@ -1,7 +1,15 @@
-exportPattern("csvy", "block.Ord", "incr", "decr", "plotpersp")
-import("coneproj", "Matrix", "survey", "MASS", "purrr")
-importFrom("stats", "pbeta", "fitted", "gaussian", "median", "model.frame", "model.matrix", "model.response", "rnorm", "as.formula", "sd", "make.link", "qnorm", "vcov", "aggregate")
-#importFrom("utils", "head")
+export("csvy", "block.Ord")
+import("survey", "cgam")
+importFrom("coneproj", "coneA", "coneB")
+importFrom("MASS", "ginv", "mvrnorm")
+importFrom("Matrix", "bdiag")
+#importFrom("cgam", "incr", "decr", "plotpersp")
+importFrom("purrr", "map_dbl", "map")
+importFrom("stats", "pbeta", "fitted", "gaussian", "median", 
+           "model.frame", "model.matrix", "model.response", "rnorm", 
+           "as.formula", "sd", "make.link", "qnorm", "vcov", "aggregate",
+           "coef", "delete.response", "formula", "predict",
+           "printCoefmat", "terms")
 importFrom("Matrix", "bdiag", "rankMatrix")
 importFrom("graphics", "par", "persp", "grid", "legend", "plot", "points", "segments")
 importFrom("grDevices", "topo.colors", "cm.colors", "heat.colors", "terrain.colors", "rgb","col2rgb")
@@ -10,7 +18,11 @@ S3method(fitted, csvy)
 S3method(print, csvy)
 S3method(plotpersp, csvy)
 
-#S3method(summary, csvy)
-#S3method(print, summary.csvy)
-#S3method(predict, csvy)
+S3method(summary, csvy)
+S3method(print, summary.csvy)
+S3method(predict, csvy)
+S3method(confint, csvy)
+S3method(vcov, csvy)
+S3method(coef, csvy)
+
 
