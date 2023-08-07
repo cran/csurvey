@@ -1,44 +1,28 @@
 \name{nhdat}
 \alias{nhdat}
-\title{NHANES Data}
+\title{
+  A Subset of National Health and Nutrition Examination Survey (NHANES) 
+}
 
 \description{
-The NHANES study provides health data for a sample of the U.S. population.
-There are N=1680 observations with complete records for cholesterol level, age, height, waist size, and gender for adults ages 21-40.
+
+  The National Health and Nutrition Examination Survey (NHANES) combines in-person interviews and physical examinations to produce a comprehensive data set from a probability sample of residents of the U.S.  
+  
+  This data set is a subset of the NHANES data with 1,933 subjects.
+
 }
-
 \usage{data("nhdat")}
-
 \format{
-  A data frame with 1680 observations on the following 7 variables.
   \describe{
-    \item{\code{id}}{ID vector}
-    \item{\code{chol}}{Cholesterol level: 1 (>= 200 (mmol/L) and 0 (< 200 (mmol/L)}
-    \item{\code{wcat}}{A factor of categorized waist size}
-    \item{\code{gender}}{Gender}
-    \item{\code{age}}{A factor of categorized age}
-    \item{\code{wt}}{A vector of stratified sampling weight}
-    \item{\code{str}}{A vector of strata variable in the stratified sampling design}
+    \item{\code{id}}{a identification vector specifying cluster ids from largest level to smallest level}
+    \item{\code{chol}}{a continuous vector of cholesterol level}
+    \item{\code{wcat}}{a vector of categorized waist and height ratio}
+    \item{\code{icat}}{an indicator of income levels}
+    \item{\code{gender}}{a binary vector of genders}
+    \item{\code{age}}{a vector of categorized age}
+    \item{\code{wt}}{sampling weight within each stratum}
+    \item{\code{str}}{a numeric vector}
   }
 }
-
-
-\examples{
-library(csurvey)
-data(nhdat)
-
-#specify a stratified design
-dstrat <- svydesign(ids = ~ id,  strata = ~ str, data = nhdat,  weight = ~ wt)
-
-#constrained estimate: domain mean of cholesterol level is increasing in age and waist size
-#M is the total number of domains
-M <- 160
-ans <- csvy(chol ~ incr(age) * incr(wcat) * gender, design = dstrat,
-  nD = M, family = quasibinomial(link = "logit"), n.mix = 0, test = FALSE)
-
-plotpersp(ans, categ = "gender", type = "response", NCOL = 2)
-
-}
-
 
 \keyword{datasets}

@@ -1,0 +1,5 @@
+1.3
+
+* more family options are included: binomial, poisson and Gamma
+* S3 methods predict.csvy, plotpersp.csvy, confint.csvy and vov.csy are registered in 'NAMESPACE' 
+ 

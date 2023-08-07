@@ -16,7 +16,7 @@
  \item{x}{A numeric predictor which has the same length as the response vector.}
 
   \item{order}{
-A \eqn{1 \times M} vector defining the order of domains when the shape constraint is block ordering.
+A \eqn{1 \times M} vector defining the order of domains when the shape constraint is block ordering. 
 }
    \item{numknots}{The number of knots used to smoothly constrain a predictor. The value should be \eqn{0} for a shape-restricted predictor without smoothing. The default value is \eqn{0}.}
 
@@ -34,7 +34,7 @@ A \eqn{1 \times M} vector defining the order of domains when the shape constrain
 }
 
 \seealso{
-  \code{\link{incr}}, \code{\link{decr}}
+  \code{\link{csvy}}
 }
 
 \keyword{shape routine}
