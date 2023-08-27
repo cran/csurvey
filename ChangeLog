@@ -3,3 +3,10 @@
 * more family options are included: binomial, poisson and Gamma
 * S3 methods predict.csvy, plotpersp.csvy, confint.csvy and vov.csy are registered in 'NAMESPACE' 
  
+1.6
+
+* use coneA to impose monotonicity on confidence bands
+
+1.7
+
+* forgot to change cholestorel level of the data nhdat into binary in version 1.6....fixed it in version 1.7
