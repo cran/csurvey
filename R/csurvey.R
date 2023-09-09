@@ -2703,220 +2703,129 @@ makeamat_2d_block = function(x=NULL, sh, block.ave = NULL, block.ord = NULL, zer
                              grid2 = NULL, M_0 = NULL) {
   #block average is not added yet
   if (all(block.ave == -1) & (length(block.ord) > 1)) {
-    if(length(zeros_ps) > 0){
-      iter = 0
-      ps = sapply(xvs2[[D_index]], function(.x) which(grid2[, D_index] %in% .x)[1])
-      ps0 = ps
-      ps1_ed = ps[2] - 1
+    ps = sapply(xvs2[[D_index]], function(.x) which(grid2[, D_index] %in% .x)[1])
+    #nbcks is the total number of blocks
+    block.ord_nz = block.ord
+    noord_ps = which(block.ord == 0)
+    #this rm_id is not for empty cells; it is for some domain we don't want to compare ... with
+    rm_id = unique(sort(noord_ps))
+    #test:
+    #z_rm_id = NULL
+    #if(length(zeros_ps) > 0){
+    #  for(e in zeros_ps){
+    #    z_rm_id = c(z_rm_id, max(which(ps <= e)))
+    #  }
+    #}
+    #if(ncol(grid2) == 1){
+    #rm_id = unique(sort(c(z_rm_id, noord_ps)))
+    #} else {
+    #  rm_id = unique(sort(noord_ps))
+    #}
+    if(length(rm_id)>0){
+      block.ord_nz = block.ord[-rm_id]
+    }
+    
+    ubck = unique(block.ord_nz)
+    #use values in block.ord as an ordered integer vector
+    ubck = sort(ubck)
+    
+    nbcks = length(table(block.ord_nz))
+    szs = as.vector(table(block.ord_nz))
+    
+    if(length(rm_id) > 0){
+      ps = ps[-rm_id]
+    }
+    #amat dimension: l1*l2...*lk by M
+    amat = NULL
+    for(i in 1:(nbcks-1)) {
+      ubck1 = ubck[i]
+      ubck2 = ubck[i+1]
+      bck_1 = which(block.ord_nz == ubck1)
+      bck_2 = which(block.ord_nz == ubck2)
+      l1 = length(bck_1)
+      l2 = length(bck_2)
       
-      amat = NULL
-      #obs = 1:length(block.ord)
-      while(iter < ps1_ed) {
-        ps = ps0 + iter
-        
-        block.ord_nz = block.ord
-        noord_ps = which(block.ord == 0)
-        rm_id = noord_ps
-        
-        #test:
-        z_rm_id = NULL
-        if(length(zeros_ps) > 0){
-          for(e in zeros_ps){
-            z_rm_id = c(z_rm_id, which(ps == e))
-          }
-        }
-        
-        if(length(z_rm_id) > 1){
-          rm_id = sort(c(z_rm_id, noord_ps))
-        }
-        
-        if(length(rm_id)>0){
-          block.ord_nz = block.ord[-rm_id]
-        }
-        
-        ubck = unique(block.ord_nz)
-        #use values in block.ord as an ordered integer vector
-        ubck = sort(ubck)
-        
-        nbcks = length(table(block.ord_nz))
-        szs = as.vector(table(block.ord_nz))
-        
-        if(length(rm_id) > 0){
-          ps = ps[-rm_id]
-        }
-        
-        #amati dimension: l1*l2...*lk by M
-        amati = NULL
-        for(i in 1:(nbcks-1)) {
-          ubck1 = ubck[i]
-          ubck2 = ubck[i+1]
-          bck_1 = which(block.ord_nz == ubck1)
-          bck_2 = which(block.ord_nz == ubck2)
-          l1 = length(bck_1)
-          l2 = length(bck_2)
-          
-          ps_bck1 = ps[which(block.ord_nz == ubck1)]
-          ps_bck2 = ps[which(block.ord_nz == ubck2)]
-          #for each element in block1, the value for each element in block 2 will be the same
-          #for each element in block1, the number of comparisons is l2
-          amat_bcki = NULL
-          
-          #tmp:
-          if(D_index == 1){
-            M.ord = length(block.ord) 
-          }else{
-            M.ord = M_0
-            #M.ord = nrow(grid2)
-          }
-          
-          amatj = matrix(0, nrow = l2, ncol = M.ord)
-          #amatj = matrix(0, nrow = l2, ncol = M.ord-rm_l)
-          #bck_1k = bck_1[1]
-          bck_1k = ps_bck1[1]
-          amatj[, bck_1k] = -1
-          row_pointer = 1
-          for(j in 1:l2){
-            #bck_2j = bck_2[j]
-            bck_2j = ps_bck2[j]
-            amatj[row_pointer, bck_2j] = 1
-            row_pointer = row_pointer + 1
-          }
+      ps_bck1 = ps[which(block.ord_nz == ubck1)]
+      ps_bck2 = ps[which(block.ord_nz == ubck2)]
+      #for each element in block1, the value for each element in block 2 will be the same
+      #for each element in block1, the number of comparisons is l2
+      amat_bcki = NULL
+      
+      #tmp:
+      if(D_index == 1){
+        M.ord = length(block.ord) 
+      }else{
+        M.ord = M_0
+        #M.ord = nrow(grid2)
+      }
+      
+      amatj = matrix(0, nrow = l2, ncol = M.ord)
+      #amatj = matrix(0, nrow = l2, ncol = M.ord-rm_l)
+      #bck_1k = bck_1[1]
+      bck_1k = ps_bck1[1]
+      amatj[, bck_1k] = -1
+      row_pointer = 1
+      for(j in 1:l2){
+        #bck_2j = bck_2[j]
+        bck_2j = ps_bck2[j]
+        amatj[row_pointer, bck_2j] = 1
+        row_pointer = row_pointer + 1
+      }
+      amatj0 = amatj
+      amat_bcki = rbind(amat_bcki, amatj)
+      
+      if(l1 >= 2){
+        for(k in 2:l1) {
+          #bck_1k = bck_1[k]; bck_1k0 = bck_1[k-1]
+          bck_1k = ps_bck1[k]; bck_1k0 = ps_bck1[k-1]
+          amatj = amatj0
+          #set the value for the kth element in block 1 to be -1
+          #set the value for the (k-1)th element in block 1 back to 0
+          #keep the values for block 2
+          amatj[, bck_1k] = -1; amatj[, bck_1k0] = 0
           amatj0 = amatj
           amat_bcki = rbind(amat_bcki, amatj)
-          
-          if(l1 >= 2){
-            for(k in 2:l1) {
-              #bck_1k = bck_1[k]; bck_1k0 = bck_1[k-1]
-              bck_1k = ps_bck1[k]; bck_1k0 = ps_bck1[k-1]
-              amatj = amatj0
-              #set the value for the kth element in block 1 to be -1
-              #set the value for the (k-1)th element in block 1 back to 0
-              #keep the values for block 2
-              amatj[, bck_1k] = -1; amatj[, bck_1k0] = 0
-              amatj0 = amatj
-              amat_bcki = rbind(amat_bcki, amatj)
-            }
-          }
-          amati = rbind(amati, amat_bcki)
         }
-        
+      }
+      amat = rbind(amat, amat_bcki)
+    }
+    
+    if(D_index > 1){
+      iter = 1
+      amat0 = amat 
+      nr = nrow(amat0)
+      nc = ncol(amat0)
+      ps = sapply(xvs2[[D_index]], function(.x) which(grid2[,D_index] %in% .x)[1])
+      ps1_ed = ps[2] - 1
+      
+      if(length(noord_cells) > 0){
+        ps = ps[-noord_cells]
+      }
+      
+      while(iter < ps1_ed) {
+        ps1 = ps + iter
+        amati = matrix(0, nrow=nr, ncol=nc)
+        amati[, ps1] = amat0[, ps]
         amat = rbind(amat, amati)
         iter = iter + 1
       }
-      amat = amat[, -zeros_ps]
-      return (amat)
-    } else {
-      ps = sapply(xvs2[[D_index]], function(.x) which(grid2[, D_index] %in% .x)[1])
-      #nbcks is the total number of blocks
-      block.ord_nz = block.ord
-      noord_ps = which(block.ord == 0)
-      rm_id = unique(sort(noord_ps))
-      #test:
-      #z_rm_id = NULL
-      #if(length(zeros_ps) > 0){
-      #  for(e in zeros_ps){
-      #    z_rm_id = c(z_rm_id, max(which(ps <= e)))
-      #  }
-      #}
-      #if(ncol(grid2) == 1){
-      #rm_id = unique(sort(c(z_rm_id, noord_ps)))
-      #} else {
-      #  rm_id = unique(sort(noord_ps))
-      #}
-      if(length(rm_id)>0){
-        block.ord_nz = block.ord[-rm_id]
-      }
-      
-      ubck = unique(block.ord_nz)
-      #use values in block.ord as an ordered integer vector
-      ubck = sort(ubck)
-      
-      nbcks = length(table(block.ord_nz))
-      szs = as.vector(table(block.ord_nz))
-      
-      if(length(rm_id) > 0){
-        ps = ps[-rm_id]
-      }
-      #amat dimension: l1*l2...*lk by M
-      amat = NULL
-      for(i in 1:(nbcks-1)) {
-        ubck1 = ubck[i]
-        ubck2 = ubck[i+1]
-        bck_1 = which(block.ord_nz == ubck1)
-        bck_2 = which(block.ord_nz == ubck2)
-        l1 = length(bck_1)
-        l2 = length(bck_2)
-        
-        ps_bck1 = ps[which(block.ord_nz == ubck1)]
-        ps_bck2 = ps[which(block.ord_nz == ubck2)]
-        #for each element in block1, the value for each element in block 2 will be the same
-        #for each element in block1, the number of comparisons is l2
-        amat_bcki = NULL
-        
-        #tmp:
-        if(D_index == 1){
-          M.ord = length(block.ord) 
-        }else{
-          M.ord = M_0
-          #M.ord = nrow(grid2)
-        }
-        
-        amatj = matrix(0, nrow = l2, ncol = M.ord)
-        #amatj = matrix(0, nrow = l2, ncol = M.ord-rm_l)
-        #bck_1k = bck_1[1]
-        bck_1k = ps_bck1[1]
-        amatj[, bck_1k] = -1
-        row_pointer = 1
-        for(j in 1:l2){
-          #bck_2j = bck_2[j]
-          bck_2j = ps_bck2[j]
-          amatj[row_pointer, bck_2j] = 1
-          row_pointer = row_pointer + 1
-        }
-        amatj0 = amatj
-        amat_bcki = rbind(amat_bcki, amatj)
-        
-        if(l1 >= 2){
-          for(k in 2:l1) {
-            #bck_1k = bck_1[k]; bck_1k0 = bck_1[k-1]
-            bck_1k = ps_bck1[k]; bck_1k0 = ps_bck1[k-1]
-            amatj = amatj0
-            #set the value for the kth element in block 1 to be -1
-            #set the value for the (k-1)th element in block 1 back to 0
-            #keep the values for block 2
-            amatj[, bck_1k] = -1; amatj[, bck_1k0] = 0
-            amatj0 = amatj
-            amat_bcki = rbind(amat_bcki, amatj)
-          }
-        }
-        amat = rbind(amat, amat_bcki)
-      }
-      
-      if(D_index > 1){
-        iter = 1
-        amat0 = amat 
-        nr = nrow(amat0)
-        nc = ncol(amat0)
-        ps = sapply(xvs2[[D_index]], function(.x) which(grid2[,D_index] %in% .x)[1])
-        ps1_ed = ps[2] - 1
-        
-        if(length(noord_cells) > 0){
-          ps = ps[-noord_cells]
-        }
-        
-        while(iter < ps1_ed) {
-          ps1 = ps + iter
-          amati = matrix(0, nrow=nr, ncol=nc)
-          amati[, ps1] = amat0[, ps]
-          amat = rbind(amat, amati)
-          iter = iter + 1
-        }
-      }
     }
-    return (amat)
+    
+    #test more...
+    #handle empty cells
+    if (length(zeros_ps) > 0) {
+      compared_pairs = apply(amat, 1, function(e) which(e != 0))
+      #check if or not any empty cell has been compared; if yes, then delete the rows
+      rm_rows = which(apply(compared_pairs, 2, function (e) any(e %in% zeros_ps)))
+      if (length(rm_rows) > 0) {
+        amat = amat[-rm_rows, ,drop = FALSE]
+      }
+      #columns for empty cells must be removed too; there are no thetahat for these domains when run coneA
+      amat = amat[, -zeros_ps]
+    }
   }
+  return (amat)
 }
-
 
 #########################
 #empty cell imputation 

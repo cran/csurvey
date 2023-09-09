@@ -10,3 +10,7 @@
 1.7
 
 * forgot to change cholestorel level of the data nhdat into binary in version 1.6....fixed it in version 1.7
+
+1.8
+
+* makeamat_2d_block is updated. When there are empty cells, rows and columns for empty cells are both deleted from amat
