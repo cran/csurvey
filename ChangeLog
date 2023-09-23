@@ -14,3 +14,8 @@
 1.8
 
 * makeamat_2d_block is updated. When there are empty cells, rows and columns for empty cells are both deleted from amat
+
+1.9
+
+* add nhdat2 data set, in which chol is continuous
+* add nscg and nscg2 data set

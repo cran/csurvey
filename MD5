@@ -1,8 +1,10 @@
-f4a6818d867722fb4480a1b3ef11f920 *ChangeLog
-e93f9dbc5a0f00e26ad51ddd93ee781c *DESCRIPTION
+b87c4193e2562f318daaa3218e1ad52c *ChangeLog
+355e80aa122e6c3e0ae5c5ac8d8f9186 *DESCRIPTION
 e1bd2af9abe6fac657c8435fd4cfcac1 *NAMESPACE
-4f397a47e90dff731228ca780ede8901 *R/csurvey.R
-9c1cd5de3a79da99f205b8abb2fe0eba *data/nhdat.rda
+cf0c1ef04f249316d9c49f521b1b3107 *R/csurvey.R
+2bc6818239554a0b57bcbcb37a2d9037 *data/nhdat.rda
+0f9840259927c047af59fda13bdd3e18 *data/nhdat2.rda
 23447dbe7126705d3484318962f039b7 *man/block.Ord.Rd
 c20a7a67273fd46791cb7d9dbc3e0d4e *man/csvy.Rd
-e5624f55d6f60129ca481317f1c42481 *man/nhdat.Rd
+e8ba60dace51069dbe4060d30ea51b6e *man/nhdat.Rd
+7c61f99e42fe2aae5acb421accbfa58f *man/nhdat2.Rd

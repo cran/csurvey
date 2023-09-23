@@ -1,114 +1,114 @@
 #############################
 ## main routine for the user#
 #############################
-csvy <- function(formula, design, subset=NULL, nD=NULL, family=stats::gaussian(),
+csvy = function(formula, design, subset=NULL, nD=NULL, family=stats::gaussian(),
                  amat=NULL, level=0.95, n.mix=100L, test=TRUE,...) {
-  cl <- match.call()
-  subset <- substitute(subset)
-  subset <- eval(subset, model.frame(design), parent.frame())
+  cl = match.call()
+  subset = substitute(subset)
+  subset = eval(subset, model.frame(design), parent.frame())
   if (!is.null(subset)){
     if (any(is.na(subset)))
       stop("subset must not contain NA values")
-    design <- design[subset,]
+    design = design[subset,]
   }
   if (is.character(family))
-    family <- get(family, mode = "function", envir = parent.frame())
+    family = get(family, mode = "function", envir = parent.frame())
   if (is.function(family))
-    family <- family()
+    family = family()
   if (is.null(family$family))
     stop("'family' not recognized!")
-  labels <- NULL
-  mf <- match.call(expand.dots = FALSE)
-  m <- match("formula", names(mf), 0L)
-  mf <- mf[c(1L, m)]
-  mf[[1L]] <- as.name("model.frame")
-  mf <- eval(mf, model.frame(design), parent.frame())
-  ynm <- names(mf)[1]
-  mt <- attr(mf, "terms")
-  y <- model.response(mf, "any")
-  shapes_add <- NULL
-  xmat_add0 <- NULL
-  xmat_add <- NULL
-  xnms_add <- NULL
-  nums_add <- NULL
-  xid_add <- 1
-  relaxes <- NULL
-  block.ave.lst <- vector("list", length = (ncol(mf)-1))
-  block.ord.lst <- vector("list", length = (ncol(mf)-1))
-  cnms <- colnames(mf)
+  labels = NULL
+  mf = match.call(expand.dots = FALSE)
+  m = match("formula", names(mf), 0L)
+  mf = mf[c(1L, m)]
+  mf[[1L]] = as.name("model.frame")
+  mf = eval(mf, model.frame(design), parent.frame())
+  ynm = names(mf)[1]
+  mt = attr(mf, "terms")
+  y = model.response(mf, "any")
+  shapes_add = NULL
+  xmat_add0 = NULL
+  xmat_add = NULL
+  xnms_add = NULL
+  nums_add = NULL
+  xid_add = 1
+  relaxes = NULL
+  block.ave.lst = vector("list", length = (ncol(mf)-1))
+  block.ord.lst = vector("list", length = (ncol(mf)-1))
+  cnms = colnames(mf)
   for (i in 2:ncol(mf)) {
     if (is.numeric(attributes(mf[,i])$shape)) {
-      labels <- c(labels, "additive")
-      shapes_add <- c(shapes_add, attributes(mf[,i])$shape)
-      reli <- attributes(mf[,i])$relax
+      labels = c(labels, "additive")
+      shapes_add = c(shapes_add, attributes(mf[,i])$shape)
+      reli = attributes(mf[,i])$relax
       if (is.null(reli)) {
-        reli <- FALSE
+        reli = FALSE
       } else {
-        reli <- TRUE
+        reli = TRUE
       }
-      relaxes <- c(relaxes, reli)
+      relaxes = c(relaxes, reli)
       if (is.factor(mf[,i]) && is.character(levels(mf[,i]))) {
-        xmat_add <- cbind(xmat_add, as.numeric(mf[,i]))
+        xmat_add = cbind(xmat_add, as.numeric(mf[,i]))
       } else {
-        xmat_add <- cbind(xmat_add, mf[,i])
+        xmat_add = cbind(xmat_add, mf[,i])
       }
-      xmat_add0 <- cbind(xmat_add0, mf[,i])
-      xnms_add <- c(xnms_add, attributes(mf[,i])$nm)
-      xid_add <- xid_add + 1
+      xmat_add0 = cbind(xmat_add0, mf[,i])
+      xnms_add = c(xnms_add, attributes(mf[,i])$nm)
+      xid_add = xid_add + 1
       
-      block.ord.lst[[i-1]] <- -1
-      block.ave.lst[[i-1]] <- -1
+      block.ord.lst[[i-1]] = -1
+      block.ave.lst[[i-1]] = -1
       if ((attributes(mf[,i])$categ == "block.ord")) {
-        block.ord.lst[[i-1]] <- attributes(mf[,i])$order
+        block.ord.lst[[i-1]] = attributes(mf[,i])$order
       }
       if ((attributes(mf[,i])$categ == "block.ave")) {
-        block.ave.lst[[i-1]] <- attributes(mf[,i])$order
+        block.ave.lst[[i-1]] = attributes(mf[,i])$order
       }
     } else if (is.null(attributes(mf[,i])$shape)) {
-      block.ord.lst[[i-1]] <- -1
-      block.ave.lst[[i-1]] <- -1
-      reli <- attributes(mf[,i])$relax
+      block.ord.lst[[i-1]] = -1
+      block.ave.lst[[i-1]] = -1
+      reli = attributes(mf[,i])$relax
       if (is.null(reli)) {
-        reli <- FALSE
+        reli = FALSE
       } else {
-        reli <- TRUE
+        reli = TRUE
       }
-      relaxes <- c(relaxes, reli)
-      shapes_add <- c(shapes_add, 0)
-      labels <- c(labels, "additive")
-      xmat_add <- cbind(xmat_add, mf[,i])
-      xmat_add0 <- cbind(xmat_add0, mf[,i])
-      xnms_add <- c(xnms_add, cnms[i])
-      xid_add <- xid_add + 1
+      relaxes = c(relaxes, reli)
+      shapes_add = c(shapes_add, 0)
+      labels = c(labels, "additive")
+      xmat_add = cbind(xmat_add, mf[,i])
+      xmat_add0 = cbind(xmat_add0, mf[,i])
+      xnms_add = c(xnms_add, cnms[i])
+      xid_add = xid_add + 1
     }
   }
   
-  xid_add <- 2:ncol(mf)
-  #xmat_add <- mf[, -1, drop = FALSE]
+  xid_add = 2:ncol(mf)
+  #xmat_add = mf[, -1, drop = FALSE]
   #how to handle ...?
-  #fit <- csvy.fit(design = design, fo = formula, subset = subset, family = family, M = nD, xm = xmat_add, xnms_add = xnms_add,
+  #fit = csvy.fit(design = design, fo = formula, subset = subset, family = family, M = nD, xm = xmat_add, xnms_add = xnms_add,
   #                sh = shapes_add, ynm = ynm, block.ave.lst = block.ave.lst, block.ord.lst = block.ord.lst,
   #                level = level, n.mix = n.mix, test = test,...)
-  fit <- eval(call("csvy.fit", design = design, family = family, M = nD, 
+  fit = eval(call("csvy.fit", design = design, family = family, M = nD, 
                    relaxes = relaxes, xm = xmat_add, xnms_add = xnms_add,
                    sh = shapes_add, ynm = ynm, amat = amat,
                    block.ave.lst = block.ave.lst, 
                    block.ord.lst = block.ord.lst, 
                    level = level, n.mix = n.mix, cl = cl, test = test))
-  fit$survey.design <- design
-  fit$data <- design$variables
-  fit$na.action <- attr(mf, "na.action")
-  fit$call <- cl
-  fit$family <- family
-  fit$n.mix <- n.mix
-  fit$terms <- mt
-  fit$xmat_add <- xmat_add 
-  fit$xmat_add0 <- xmat_add0
-  fit$xnms_add <- xnms_add
-  fit$shapes_add <- shapes_add
-  fit$ynm <- ynm
-  class(fit) <- c("csvy", "cgam", "svyglm", "glm")
-  # classes <- if (inherits(design, "svyrep.design")) {
+  fit$survey.design = design
+  fit$data = design$variables
+  fit$na.action = attr(mf, "na.action")
+  fit$call = cl
+  fit$family = family
+  fit$n.mix = n.mix
+  fit$terms = mt
+  fit$xmat_add = xmat_add 
+  fit$xmat_add0 = xmat_add0
+  fit$xnms_add = xnms_add
+  fit$shapes_add = shapes_add
+  fit$ynm = ynm
+  class(fit) = c("csvy", "cgam", "svyglm", "glm")
+  # classes = if (inherits(design, "svyrep.design")) {
   #   c("svrepglm", "svyglm")
   # } else {
   #   "svyglm"
@@ -173,15 +173,15 @@ csvy.fit = function(design, family=stats::gaussian(), M=NULL, relaxes=NULL,
     M = max(obs_cells)
   }
   
-  Tot_obs <- length(obs_cells)
+  Tot_obs = length(obs_cells)
   #print (obs_cells)
   #print (Max_obs)
   if (is.null(M)) {
     #stop("nD (total number of domains) is not provided! \n")
-    M <- max(obs_cells)
+    M = max(obs_cells)
   } else if (M %% 1 != 0 | M <= 1) {
     stop(paste("nD (total number of domains) must be a positive integer > 1!", "\n"))
-    #M <- max(obs_cells)
+    #M = max(obs_cells)
   } else if (M < Tot_obs) {
     stop(paste("There are at least", Tot_obs, "domains! nD (total number of domains) should be >= ",
                Tot_obs, sep = " ", "\n"))
@@ -255,22 +255,35 @@ csvy.fit = function(design, family=stats::gaussian(), M=NULL, relaxes=NULL,
       #print (which(1:M %in% udi)) #cannot be used in 1D case if uds_num not start from 1
       #print (which(uds_num %in% udi)) #cannot be used, cannot handle empty cells
       #print (udi)
-      Nhat[udi] = Nhi
-      nd[udi] = length(wi)
-      ys[[udi]] = ysi
-      #new: for binomial
-      if (all(ysi == 0) | all(ysi == 1)) {
-        #stop('check!')
-        y_ch_id = c(y_ch_id, udi)
-        #y_ch_id = c(y_ch_id, which(uds_num %in% udi))
+      #test!
+      if (min(uds_num) > 1) {
+        Nhat[udi - min(uds_num) + 1] = Nhi
+        nd[udi - min(uds_num) + 1] = length(wi)
+        ys[[udi - min(uds_num) + 1]] = ysi
+        #new: for binomial
+        if (all(ysi == 0) | all(ysi == 1)) {
+          y_ch_id = c(y_ch_id, udi- min(uds_num) + 1)
+        }
+        stratawt[[udi - min(uds_num) + 1]] = wi
+        ybar_vec[udi - min(uds_num) + 1] = mean(ysi)
+      } else {
+        Nhat[udi] = Nhi
+        nd[udi] = length(wi)
+        ys[[udi]] = ysi
+        #new: for binomial
+        if (all(ysi == 0) | all(ysi == 1)) {
+          #stop('check!')
+          y_ch_id = c(y_ch_id, udi)
+          #y_ch_id = c(y_ch_id, which(uds_num %in% udi))
+        }
+        
+        #stratawt[[i]] = wi
+        #ybar_vec[i] = mean(ysi)
+        #stratawt[[which(1:M %in% udi)]] = wi
+        #ybar_vec[which(1:M %in% udi)] = mean(ysi)
+        stratawt[[udi]] = wi
+        ybar_vec[udi] = mean(ysi)
       }
-      
-      #stratawt[[i]] = wi
-      #ybar_vec[i] = mean(ysi)
-      #stratawt[[which(1:M %in% udi)]] = wi
-      #ybar_vec[which(1:M %in% udi)] = mean(ysi)
-      stratawt[[udi]] = wi
-      ybar_vec[udi] = mean(ysi)
     }
   }
   
@@ -357,15 +370,25 @@ csvy.fit = function(design, family=stats::gaussian(), M=NULL, relaxes=NULL,
     vsu = round(diag(v1), 5)
     ans.unc_null = svyglm(formula=fo2_null, design=ds, family=family)
     prior.weights = ans.unc_null$prior.weights
-    ans.unc_cp_0 <- ans.unc
+    ans.unc_cp_0 = ans.unc
   } else {
-    fo_by <- if (length(xnms_add) == 1) formula(paste("~", xnms_add)) else formula(paste("~", paste(xnms_add, collapse = "+")))
-    ans.unc_cp_0 <- suppressWarnings(svyby(formula = fo, by = fo_by, design = ds, FUN = svymean, keep.var = TRUE,
+    fo_by = if (length(xnms_add) == 1) formula(paste("~", xnms_add)) else formula(paste("~", paste(xnms_add, collapse = "+")))
+    ans.unc_cp_0 = suppressWarnings(svyby(formula = fo, by = fo_by, design = ds, FUN = svymean, keep.var = TRUE,
                                            keep.names = TRUE, verbose = FALSE, vartype = "se",
                                            drop.empty.groups = FALSE, covmat = TRUE,
                                            na.rm.by = FALSE, na.rm.all = FALSE))
-    ans.unc = svyglm(formula=fo2, design=ds, family=family, 
-                     control = list(epsilon = 1e-8, maxit = 25))
+    #ans.unc = svyglm(formula=fo2, design=ds, family=family, 
+    #                 control = list(epsilon = 1e-5, maxit = 12))
+    
+    #ans.unc = tryCatch({svyglm(formula=fo2, design=ds, family=family, 
+    #                           control = list(epsilon = 1e-7, maxit = 10))}, error = function(e) {e})
+    #if(inherits(ans.unc, 'error')) {
+    #  stop('check!')
+    #} 
+    
+    ans.unc = suppressWarnings(svyglm(formula=fo2, design=ds, family=family, 
+                                      control = list(epsilon = 1e-8, maxit = 10)))
+    
     prior.weights = ans.unc$prior.weights
     #create newdata
     newdata = grid2
@@ -629,6 +652,14 @@ csvy.fit = function(design, family=stats::gaussian(), M=NULL, relaxes=NULL,
     #if (family$family == "gaussian"){
     ans.polar = coneA(yvec, amat, w=w, msg=FALSE)
     etahat = round(ans.polar$thetahat, 10)
+    #ans.polar = tryCatch({coneA(yvec, amat, w=w, msg=FALSE)}, error = function(e) {e})
+    #if(inherits(ans.polar, 'error')) {
+    #  stop('check!')
+    #} else {
+    #  etahat = round(ans.polar$thetahat, 10)
+    #}
+    #ans.polar = coneA(yvec, amat, w=w, msg=FALSE)
+    #etahat = round(ans.polar$thetahat, 10)
     # } else {
     #   # umat = chol(v1)
     #   # uinv = solve(umat)
@@ -859,8 +890,6 @@ csvy.fit = function(design, family=stats::gaussian(), M=NULL, relaxes=NULL,
   sig1 = vsc
   sig2 = sig1
   vsc_mix = sig1
-  #new:
-  vsc_mix_0 = vsc_mix
   
   hl = z.mult*sqrt(vsc_mix)
   lwr = etahat - hl
@@ -890,22 +919,46 @@ csvy.fit = function(design, family=stats::gaussian(), M=NULL, relaxes=NULL,
   #print (dim(amat_0))
   #print (length(lwr))
   
-  check_ps_lwr = round(c(amat_0 %*% lwr), 5) 
-  check_ps_upp = round(c(amat_0 %*% upp), 5) 
+  check_ps_lwr = round(c(amat_0 %*% lwr), 4) 
+  check_ps_upp = round(c(amat_0 %*% upp), 4) 
   
   not_monotone_ci = any(check_ps_lwr < 0) | any(check_ps_upp < 0)
   
+  #check more
+  wvec = nd/sum(nd)
+  if(any(wvec == 0)){
+    wvec[which(wvec == 0)] = 1e-4
+  }
+  
+  vsc_mix_0 = vsc_mix
   if (length(sh_0) == 1 & n.mix > 0 & not_monotone_ci) {
-    lwr = fix_monotone_1D(lwr, sh_0, nd)
-    upp = fix_monotone_1D(upp, sh_0, nd)
+    #lwr = fix_monotone_1D(lwr, sh_0, nd)
+    #upp = fix_monotone_1D(upp, sh_0, nd)
     #new:
+    #wvec1 = fix_monotone_coneA_1D(lwr, sh_0, nd)
+    #wvec2 = fix_monotone_coneA_1D(upp, sh_0, nd)
+    #print (wvec2)
+    lwr = coneA(lwr, amat_0, w = wvec)$thetahat
+    upp = coneA(upp, amat_0, w = wvec)$thetahat
     vsc_mix_0 = ((upp - lwr) / 4)^2
   }
   
+  #new:
+  check_ps_etahat = round(c(amat_0 %*% etahat), 4) 
+  if (length(sh_0) > 1 & n.mix > 0 & any(check_ps_etahat < 0) ) {
+    #wvec = fix_monotone_coneA_2D(amat_ci, amat = amat_0, ci = etahat, grid = grid2, Ds = Ds_0, nd, sh = sh_0, sh_all = sh, xvs2)
+    etahat = coneA(etahat, amat_0, w = wvec)$thetahat
+  }
+  
   if (length(sh_0) > 1 & n.mix > 0 & not_monotone_ci) {
-    etahat = fix_monotone_2D(amat_ci, amat = amat_0, ci = etahat, grid = grid2, Ds = Ds_0, nd, sh = sh_0, sh_all = sh, xvs2)
-    lwr = fix_monotone_2D(amat_ci, amat = amat_0, ci = lwr, grid = grid2, Ds = Ds_0, nd, sh = sh_0, sh_all = sh, xvs2)
-    upp = fix_monotone_2D(amat_ci, amat = amat_0, ci = upp, grid = grid2, Ds = Ds_0, nd, sh = sh_0, sh_all = sh, xvs2)
+    #etahat = fix_monotone_2D(amat_ci, amat = amat_0, ci = etahat, grid = grid2, Ds = Ds_0, nd, sh = sh_0, sh_all = sh, xvs2)
+    #lwr = fix_monotone_2D(amat_ci, amat = amat_0, ci = lwr, grid = grid2, Ds = Ds_0, nd, sh = sh_0, sh_all = sh, xvs2)
+    #upp = fix_monotone_2D(amat_ci, amat = amat_0, ci = upp, grid = grid2, Ds = Ds_0, nd, sh = sh_0, sh_all = sh, xvs2)
+    #wvec1 = fix_monotone_coneA_2D(amat_ci, amat = amat_0, ci = lwr, grid = grid2, Ds = Ds_0, nd, sh = sh_0, sh_all = sh, xvs2)
+    #wvec2 = fix_monotone_coneA_2D(amat_ci, amat = amat_0, ci = upp, grid = grid2, Ds = Ds_0, nd, sh = sh_0, sh_all = sh, xvs2)
+    
+    lwr = coneA(lwr, amat_0, w = wvec)$thetahat
+    upp = coneA(upp, amat_0, w = wvec)$thetahat
     #new:
     vsc_mix_0 = ((upp - lwr) / 4)^2
   }
@@ -1016,9 +1069,11 @@ csvy.fit = function(design, family=stats::gaussian(), M=NULL, relaxes=NULL,
   }else{
     ans$null.deviance = ans.unc$null.deviance
   }
-  ans$df.null = n - 1
+  #ans$df.null = n - 1
+  ans$df.null = M - 1
   ans$deviance = deviance
-  ans$df.residual = n - edf
+  #ans$df.residual = n - edf
+  ans$df.residual = M - edf
   ans$edf = edf 
   ans$lwr = c(lwr)
   ans$upp = c(upp)
@@ -1044,26 +1099,26 @@ csvy.fit = function(design, family=stats::gaussian(), M=NULL, relaxes=NULL,
   ans$logLike_CIC = logLike_CIC
   #new: inherit attributes if svyby is used
   if (family$family == "gaussian") {
-    ans.unc_cp <- data.frame(matrix(nrow = M_0, ncol = ncol(ans.unc)))
-    colnames(ans.unc_cp) <- colnames(ans.unc)
-    #ans.unc_cp$ID <- factor(1:M_0)
-    #ans.unc_cp <- ans.unc_cp_0
-    ans.unc_cp[[ynm]] <- as.numeric(etahat)
-    #ans.unc_cp$se <- vsc_mix^(.5)
-    ans.unc_cp$se <- vsc_mix_0^(.5) #new
-    attr(ans.unc_cp, "class") <- c("svyby", "data.frame")
-    attr(ans.unc_cp, "svyby") <- attr(ans.unc, "svyby")
-    attr(ans.unc_cp, "var") <- acov
+    ans.unc_cp = data.frame(matrix(nrow = M_0, ncol = ncol(ans.unc)))
+    colnames(ans.unc_cp) = colnames(ans.unc)
+    #ans.unc_cp$ID = factor(1:M_0)
+    #ans.unc_cp = ans.unc_cp_0
+    ans.unc_cp[[ynm]] = as.numeric(etahat)
+    #ans.unc_cp$se = vsc_mix^(.5)
+    ans.unc_cp$se = vsc_mix_0^(.5) #new
+    attr(ans.unc_cp, "class") = c("svyby", "data.frame")
+    attr(ans.unc_cp, "svyby") = attr(ans.unc, "svyby")
+    attr(ans.unc_cp, "var") = acov
   } else {
-    ans.unc_cp <- data.frame(matrix(nrow = M_0, ncol = ncol(ans.unc_cp_0)))
-    colnames(ans.unc_cp) <- colnames(ans.unc_cp_0)
-    ans.unc_cp <- ans.unc_cp_0
-    ans.unc_cp[[ynm]] <- as.numeric(etahat)
-    #ans.unc_cp$se <- vsc_mix^(.5)
-    ans.unc_cp$se <- vsc_mix_0^(.5) #new
-    attr(ans.unc_cp, "class") <- c("svyby", "data.frame")
-    attr(ans.unc_cp, "svyby") <- attr(ans.unc_cp_0, "svyby")
-    attr(ans.unc_cp, "var") <- acov
+    ans.unc_cp = data.frame(matrix(nrow = M_0, ncol = ncol(ans.unc_cp_0)))
+    colnames(ans.unc_cp) = colnames(ans.unc_cp_0)
+    ans.unc_cp = ans.unc_cp_0
+    ans.unc_cp[[ynm]] = as.numeric(etahat)
+    #ans.unc_cp$se = vsc_mix^(.5)
+    ans.unc_cp$se = vsc_mix_0^(.5) #new
+    attr(ans.unc_cp, "class") = c("svyby", "data.frame")
+    attr(ans.unc_cp, "svyby") = attr(ans.unc_cp_0, "svyby")
+    attr(ans.unc_cp, "var") = acov
   }
   ans$w = w
   ans$xm.red = xm.red
@@ -1090,9 +1145,9 @@ csvy.fit = function(design, family=stats::gaussian(), M=NULL, relaxes=NULL,
 #inherit from cgam
 #apply plotpersp to a csvy.fit object
 #####################################
-#plotpersp <- function(object,...) {
-#x1nm <- deparse(substitute(x1))
-#x2nm <- deparse(substitute(x2))
+#plotpersp = function(object,...) {
+#x1nm = deparse(substitute(x1))
+#x2nm = deparse(substitute(x2))
 #  UseMethod("plotpersp", object)
 #}
 
@@ -1705,191 +1760,191 @@ getbin = function(num, capl) {
 #eight shape functions
 #add constr for the user-defined amat case
 ##############################################
-# constr <- function(x, numknots = 0, knots = 0, space = "E")
+# constr = function(x, numknots = 0, knots = 0, space = "E")
 # {
-#   cl <- match.call()
-#   pars <- match.call()[-1]
-#   attr(x, "nm") <- deparse(pars$x)
-#   attr(x, "shape") <- 0
-#   attr(x, "numknots") <- numknots
-#   attr(x, "knots") <- knots
-#   attr(x, "space") <- space
-#   attr(x, "categ") <- "additive"
-#   #class(x) <- "additive"
+#   cl = match.call()
+#   pars = match.call()[-1]
+#   attr(x, "nm") = deparse(pars$x)
+#   attr(x, "shape") = 0
+#   attr(x, "numknots") = numknots
+#   attr(x, "knots") = knots
+#   attr(x, "space") = space
+#   attr(x, "categ") = "additive"
+#   #class(x) = "additive"
 #   x
 # }
 
-# incr <- function(x, numknots = 0, knots = 0, space = "E")
+# incr = function(x, numknots = 0, knots = 0, space = "E")
 # {
-#   cl <- match.call()
-#   pars <- match.call()[-1]
-#   attr(x, "nm") <- deparse(pars$x)
-#   attr(x, "shape") <- 1
-#   attr(x, "numknots") <- numknots
-#   attr(x, "knots") <- knots
-#   attr(x, "space") <- space
-#   attr(x, "categ") <- "additive"
-#   #class(x) <- "additive"
+#   cl = match.call()
+#   pars = match.call()[-1]
+#   attr(x, "nm") = deparse(pars$x)
+#   attr(x, "shape") = 1
+#   attr(x, "numknots") = numknots
+#   attr(x, "knots") = knots
+#   attr(x, "space") = space
+#   attr(x, "categ") = "additive"
+#   #class(x) = "additive"
 #   x
 # }
 
 #relaxed increasing
-# relax.incr <- function(x, numknots = 0, knots = 0, space = "E")
+# relax.incr = function(x, numknots = 0, knots = 0, space = "E")
 # {
-#   cl <- match.call()
-#   pars <- match.call()[-1]
-#   attr(x, "nm") <- deparse(pars$x)
-#   attr(x, "shape") <- 1
-#   attr(x, "numknots") <- numknots
-#   attr(x, "knots") <- knots
-#   attr(x, "space") <- space
-#   attr(x, "categ") <- "additive"
-#   attr(x, "relax") <- TRUE
-#   #class(x) <- "additive"
+#   cl = match.call()
+#   pars = match.call()[-1]
+#   attr(x, "nm") = deparse(pars$x)
+#   attr(x, "shape") = 1
+#   attr(x, "numknots") = numknots
+#   attr(x, "knots") = knots
+#   attr(x, "space") = space
+#   attr(x, "categ") = "additive"
+#   attr(x, "relax") = TRUE
+#   #class(x) = "additive"
 #   x
 # }
 
-# decr <- function(x, numknots = 0, knots = 0, space = "E")
+# decr = function(x, numknots = 0, knots = 0, space = "E")
 # {
-#   cl <- match.call()
-#   pars <- match.call()[-1]
-#   attr(x, "nm") <- deparse(pars$x)
-#   attr(x, "shape") <- 2
-#   attr(x, "numknots") <- numknots
-#   attr(x, "knots") <- knots
-#   attr(x, "space") <- space
-#   attr(x, "categ") <- "additive"
-#   #class(x) <- "additive"
+#   cl = match.call()
+#   pars = match.call()[-1]
+#   attr(x, "nm") = deparse(pars$x)
+#   attr(x, "shape") = 2
+#   attr(x, "numknots") = numknots
+#   attr(x, "knots") = knots
+#   attr(x, "space") = space
+#   attr(x, "categ") = "additive"
+#   #class(x) = "additive"
 #   x
 # }
 
 #relaxed decreasing
-# relax.decr <- function(x, numknots = 0, knots = 0, space = "E")
+# relax.decr = function(x, numknots = 0, knots = 0, space = "E")
 # {
-#   cl <- match.call()
-#   pars <- match.call()[-1]
-#   attr(x, "nm") <- deparse(pars$x)
-#   attr(x, "shape") <- 2
-#   attr(x, "numknots") <- numknots
-#   attr(x, "knots") <- knots
-#   attr(x, "space") <- space
-#   attr(x, "categ") <- "additive"
-#   attr(x, "relax") <- TRUE
-#   #class(x) <- "additive"
+#   cl = match.call()
+#   pars = match.call()[-1]
+#   attr(x, "nm") = deparse(pars$x)
+#   attr(x, "shape") = 2
+#   attr(x, "numknots") = numknots
+#   attr(x, "knots") = knots
+#   attr(x, "space") = space
+#   attr(x, "categ") = "additive"
+#   attr(x, "relax") = TRUE
+#   #class(x) = "additive"
 #   x
 # }
 
-# conv <- function(x, numknots = 0, knots = 0, space = "E")
+# conv = function(x, numknots = 0, knots = 0, space = "E")
 # {
-#   cl <- match.call()
-#   pars <- match.call()[-1]
-#   attr(x, "nm") <- deparse(pars$x)
-#   attr(x, "shape") <- 3
-#   attr(x, "numknots") <- numknots
-#   attr(x, "knots") <- knots
-#   attr(x, "space") <- space
-#   attr(x, "categ") <- "additive"
-#   #class(x) <- "additive"
+#   cl = match.call()
+#   pars = match.call()[-1]
+#   attr(x, "nm") = deparse(pars$x)
+#   attr(x, "shape") = 3
+#   attr(x, "numknots") = numknots
+#   attr(x, "knots") = knots
+#   attr(x, "space") = space
+#   attr(x, "categ") = "additive"
+#   #class(x) = "additive"
 #   x
 # }
 
-# conc <- function(x, numknots = 0, knots = 0, space = "E")
+# conc = function(x, numknots = 0, knots = 0, space = "E")
 # {
-#   cl <- match.call()
-#   pars <- match.call()[-1]
-#   attr(x, "nm") <- deparse(pars$x)
-#   attr(x, "shape") <- 4
-#   attr(x, "numknots") <- numknots
-#   attr(x, "knots") <- knots
-#   attr(x, "space") <- space
-#   attr(x, "categ") <- "additive"
-#   #class(x) <- "additive"
+#   cl = match.call()
+#   pars = match.call()[-1]
+#   attr(x, "nm") = deparse(pars$x)
+#   attr(x, "shape") = 4
+#   attr(x, "numknots") = numknots
+#   attr(x, "knots") = knots
+#   attr(x, "space") = space
+#   attr(x, "categ") = "additive"
+#   #class(x) = "additive"
 #   x
 # }
 
-# incr.conv <- function(x, numknots = 0, knots = 0, space = "E")
+# incr.conv = function(x, numknots = 0, knots = 0, space = "E")
 # {
-#   cl <- match.call()
-#   pars <- match.call()[-1]
-#   attr(x, "nm") <- deparse(pars$x)
-#   attr(x, "shape") <- 5
-#   attr(x, "numknots") <- numknots
-#   attr(x, "knots") <- knots
-#   attr(x, "space") <- space
-#   attr(x, "categ") <- "additive"
-#   #class(x) <- "additive"
+#   cl = match.call()
+#   pars = match.call()[-1]
+#   attr(x, "nm") = deparse(pars$x)
+#   attr(x, "shape") = 5
+#   attr(x, "numknots") = numknots
+#   attr(x, "knots") = knots
+#   attr(x, "space") = space
+#   attr(x, "categ") = "additive"
+#   #class(x) = "additive"
 #   x
 # }
 
-# decr.conv <- function(x, numknots = 0, knots = 0, space = "E")
+# decr.conv = function(x, numknots = 0, knots = 0, space = "E")
 # {
-#   cl <- match.call()
-#   pars <- match.call()[-1]
-#   attr(x, "nm") <- deparse(pars$x)
-#   attr(x, "shape") <- 6
-#   attr(x, "numknots") <- numknots
-#   attr(x, "knots") <- knots
-#   attr(x, "space") <- space
-#   attr(x, "categ") <- "additive"
-#   #class(x) <- "additive"
+#   cl = match.call()
+#   pars = match.call()[-1]
+#   attr(x, "nm") = deparse(pars$x)
+#   attr(x, "shape") = 6
+#   attr(x, "numknots") = numknots
+#   attr(x, "knots") = knots
+#   attr(x, "space") = space
+#   attr(x, "categ") = "additive"
+#   #class(x) = "additive"
 #   x
 # }
 
-# incr.conc <- function(x, numknots = 0, knots = 0, space = "E")
+# incr.conc = function(x, numknots = 0, knots = 0, space = "E")
 # {
-#   cl <- match.call()
-#   pars <- match.call()[-1]
-#   attr(x, "nm") <- deparse(pars$x)
-#   attr(x, "shape") <- 7
-#   attr(x, "numknots") <- numknots
-#   attr(x, "knots") <- knots
-#   attr(x, "space") <- space
-#   attr(x, "categ") <- "additive"
-#   #class(x) <- "additive"
+#   cl = match.call()
+#   pars = match.call()[-1]
+#   attr(x, "nm") = deparse(pars$x)
+#   attr(x, "shape") = 7
+#   attr(x, "numknots") = numknots
+#   attr(x, "knots") = knots
+#   attr(x, "space") = space
+#   attr(x, "categ") = "additive"
+#   #class(x) = "additive"
 #   x
 # }
 
-# decr.conc <- function(x, numknots = 0, knots = 0, space = "E")
+# decr.conc = function(x, numknots = 0, knots = 0, space = "E")
 # {
-#   cl <- match.call()
-#   pars <- match.call()[-1]
-#   attr(x, "nm") <- deparse(pars$x)
-#   attr(x, "shape") <- 8
-#   attr(x, "numknots") <- numknots
-#   attr(x, "knots") <- knots
-#   attr(x, "space") <- space
-#   attr(x, "categ") <- "additive"
-#   #class(x) <- "additive"
+#   cl = match.call()
+#   pars = match.call()[-1]
+#   attr(x, "nm") = deparse(pars$x)
+#   attr(x, "shape") = 8
+#   attr(x, "numknots") = numknots
+#   attr(x, "knots") = knots
+#   attr(x, "space") = space
+#   attr(x, "categ") = "additive"
+#   #class(x) = "additive"
 #   x
 # }
 
-block.Ord <- function(x, order = NULL, numknots = 0, knots = 0, space = "E")
+block.Ord = function(x, order = NULL, numknots = 0, knots = 0, space = "E")
 {
-  cl <- match.call()
-  pars <- match.call()[-1]
-  attr(x, "nm") <- deparse(pars$x)
-  attr(x, "shape") <- 9
-  attr(x, "numknots") <- numknots
-  attr(x, "knots") <- knots
-  attr(x, "space") <- space
-  attr(x, "categ") <- "block.ord"
-  attr(x, "order") <- order
-  #class(x) <- "additive"
+  cl = match.call()
+  pars = match.call()[-1]
+  attr(x, "nm") = deparse(pars$x)
+  attr(x, "shape") = 9
+  attr(x, "numknots") = numknots
+  attr(x, "knots") = knots
+  attr(x, "space") = space
+  attr(x, "categ") = "block.ord"
+  attr(x, "order") = order
+  #class(x) = "additive"
   x
 }
 
-# block.Ave <- function(x, order = NULL, numknots = 0, knots = 0, space = "E")
+# block.Ave = function(x, order = NULL, numknots = 0, knots = 0, space = "E")
 # {
-#   cl <- match.call()
-#   pars <- match.call()[-1]
-#   attr(x, "nm") <- deparse(pars$x)
-#   attr(x, "shape") <- 10
-#   attr(x, "numknots") <- numknots
-#   attr(x, "knots") <- knots
-#   attr(x, "space") <- space
-#   attr(x, "categ") <- "block.ave"
-#   attr(x, "order") <- order
-#   #class(x) <- "additive"
+#   cl = match.call()
+#   pars = match.call()[-1]
+#   attr(x, "nm") = deparse(pars$x)
+#   attr(x, "shape") = 10
+#   attr(x, "numknots") = numknots
+#   attr(x, "knots") = knots
+#   attr(x, "space") = space
+#   attr(x, "categ") = "block.ave"
+#   attr(x, "order") = order
+#   #class(x) = "additive"
 #   x
 # }
 
@@ -1926,7 +1981,7 @@ makeamat = function(x, sh, Ds = NULL, suppre = FALSE, interp = FALSE,
         amat = matrix(0, nrow = n1 - 1, ncol = n)
         if (sh > 0) {
           for (i in 1:(n1-1)) {
-            c1 = min(obs[abs(x - xu[i]) < sm]); c2 <- min(obs[abs(x - xu[i + 1]) < sm])
+            c1 = min(obs[abs(x - xu[i]) < sm]); c2 = min(obs[abs(x - xu[i + 1]) < sm])
             amat[i, c1] = -1; amat[i, c2] = 1
           }
           if (sh == 2) {amat = -amat}
@@ -3514,9 +3569,9 @@ fn_nbors_3 = function(empty_cells, amat_0, muhat){
 ############
 #fitted.csvy
 ############
-fitted.csvy <- function(object,...)
+fitted.csvy = function(object,...)
 {
-  ans <- object$muhat
+  ans = object$muhat
   ans
 }
 
@@ -3524,38 +3579,38 @@ fitted.csvy <- function(object,...)
 ##############
 #confint.csvy
 ##############
-confint.csvy <- function(object, parm = NULL, level = 0.95, type = c("link", "response"),...) {
-  type <- match.arg(type)
-  n.mix <- object$n.mix
+confint.csvy = function(object, parm = NULL, level = 0.95, type = c("link", "response"),...) {
+  type = match.arg(type)
+  n.mix = object$n.mix
   #if (n.mix %% 1 != 0 | n.mix <= 0){
   #  stop("confint function only works when n.mix is a positive integer!")
   #} else {
-  z.mult <- qnorm((1 - level) / 2, lower.tail = FALSE)
-  # vs <- vcov(object)
-  vs <- object$cov.unscaled
-  #lwr <- object$etahat - z.mult * sqrt(vs)
-  #upp <- object$etahat + z.mult * sqrt(vs)
-  lwr <- object$lwr
-  upp <- object$upp
+  z.mult = qnorm((1 - level) / 2, lower.tail = FALSE)
+  # vs = vcov(object)
+  vs = object$cov.unscaled
+  #lwr = object$etahat - z.mult * sqrt(vs)
+  #upp = object$etahat + z.mult * sqrt(vs)
+  lwr = object$lwr
+  upp = object$upp
   
-  lwr <- switch(type,
+  lwr = switch(type,
                 link = lwr,
                 response = object$family$linkinv(lwr)
   )
-  upp <- switch(type,
+  upp = switch(type,
                 link = upp,
                 response = object$family$linkinv(upp)
   )
   
-  ci.bands <- as.data.frame(do.call(cbind, list(lwr, upp)))
+  ci.bands = as.data.frame(do.call(cbind, list(lwr, upp)))
   # learn from confint.svyglm:
-  a <- (1 - level) / 2
-  a <- c(a, 1 - a)
-  pct <- paste0(format(100 * a,
+  a = (1 - level) / 2
+  a = c(a, 1 - a)
+  pct = paste0(format(100 * a,
                        trim = TRUE,
                        scientific = FALSE, digits = 3
   ), "%")
-  colnames(ci.bands) <- pct
+  colnames(ci.bands) = pct
   return(ci.bands)
   #}
 }
@@ -3563,7 +3618,7 @@ confint.csvy <- function(object, parm = NULL, level = 0.95, type = c("link", "re
 ###############
 #print method
 ###############
-print.csvy <- function(x,...){
+print.csvy = function(x,...){
   print(x$survey.design, varnames = FALSE, design.summaries = FALSE,...)
   NextMethod()
 }
@@ -3571,24 +3626,71 @@ print.csvy <- function(x,...){
 ###################################################################################
 #extract mixture variance-covariance matrix
 ###################################################################################
-vcov.csvy <- function(object,...){
-  #v <- object$acov_cp
-  v <- object$acov
+vcov.csvy = function(object,...){
+  #v = object$acov_cp
+  v = object$acov
   #temp: with empty cells, off-diagonal values in v are not imputed
   if (all(object$nd > 0)) {
-    dimnames(v) <- list(names(coef(object)), names(coef(object)))
+    dimnames(v) = list(names(coef(object)), names(coef(object)))
   } else {
     nv = dim(v)[1]
     vec_nm = as.character(1:nv)
-    dimnames(v) <- list(vec_nm, vec_nm)
+    dimnames(v) = list(vec_nm, vec_nm)
   }
   return(v)
 }
 
+
 #############################################
 #summary for csvy
+#I don't remember why I changed this summary function
+#use the one in _0517 instead
 #############################################
-summary.csvy <- function(object, ...) {
+# summary.csvy = function(object, ...) {
+#   family = object$family
+#   CIC = object$CIC
+#   CIC.un = object$CIC.un
+#   deviance = object$deviance
+#   null.deviance = object$null.deviance
+#   bval = object$bval
+#   pval = object$pval
+#   # edf
+#   df.residual = object$df.residual
+#   df.null = object$df.null
+#   edf = object$edf
+#   tms = object$terms
+#   rslt = NULL
+#   # learn from summary.svyglm
+#   # not work for gaussian; svyby
+#   #dispersion = svyvar(resid(object,"pearson"), object$survey.design, na.rm = TRUE)
+#   #disperson = survey:::summary.svrepglm(object)$disperson
+#   if(inherits(object, "svrepglm")){
+#     presid = resid(object,"pearson")
+#     dispersion = sum(object$survey.design$pweights*presid^2, na.rm = TRUE) / sum(object$survey.design$pweights)
+#   } else if (inherits(object, "svyglm")){
+#     dispersion = svyvar(resid(object, "pearson"), object$survey.design, na.rm = TRUE)
+#   }
+#   if (!is.null(pval)) {
+#     # rslt = data.frame("edf" = round(resid_df_obs, 4), "mixture of Beta" = round(bval, 4), "p.value" = round(pval, 4))
+#     # same as cgam:
+#     rslt = data.frame("edf" = round(edf, 4), "mixture of Beta" = round(bval, 4), "p.value" = round(pval, 4))
+#     # check?
+#     rownames(rslt) = rev((attributes(tms)$term.labels))[1]
+#     structure(list(
+#       call = object$call, coefficients = rslt, CIC = CIC, CIC.un = CIC.un, df.null = df.null, df.residual = df.residual,
+#       null.deviance = null.deviance, deviance = deviance, family = family, dispersion = dispersion
+#     ), class = "summary.csvy")
+#   } else {
+#     structure(list(
+#       call = object$call, CIC = CIC, CIC.un = CIC.un, df.null = df.null, df.residual = df.residual,
+#       null.deviance = null.deviance, deviance = deviance, family = family, dispersion = dispersion
+#     ), class = "summary.csvy")
+#     # warning("summary function for a csvy object only works when test = TRUE!")
+#   }
+# }
+
+
+summary.csvy <- function(object,...) {
   family <- object$family
   CIC <- object$CIC
   CIC.un <- object$CIC.un
@@ -3596,38 +3698,32 @@ summary.csvy <- function(object, ...) {
   null.deviance <- object$null.deviance
   bval <- object$bval
   pval <- object$pval
-  # edf
+  #edf
   df.residual <- object$df.residual
   df.null <- object$df.null
   edf <- object$edf
   tms <- object$terms
   rslt <- NULL
-  # learn from summary.svyglm
-  # not work for gaussian; svyby
-  #dispersion <- svyvar(resid(object,"pearson"), object$survey.design, na.rm = TRUE)
-  #disperson <- survey:::summary.svrepglm(object)$disperson
-  if(inherits(object, "svrepglm")){
-    presid <- resid(object,"pearson")
-    dispersion <- sum(object$survey.design$pweights*presid^2, na.rm = TRUE) / sum(object$survey.design$pweights)
-  } else if (inherits(object, "svyglm")){
-    dispersion <- svyvar(resid(object, "pearson"), object$survey.design, na.rm = TRUE)
-  }
   if (!is.null(pval)) {
-    # rslt = data.frame("edf" = round(resid_df_obs, 4), "mixture of Beta" = round(bval, 4), "p.value" = round(pval, 4))
-    # same as cgam:
+    #rslt = data.frame("edf" = round(resid_df_obs, 4), "mixture of Beta" = round(bval, 4), "p.value" = round(pval, 4))
+    #same as cgam:
     rslt <- data.frame("edf" = round(edf, 4), "mixture of Beta" = round(bval, 4), "p.value" = round(pval, 4))
-    # check?
+    #check?
     rownames(rslt) <- rev((attributes(tms)$term.labels))[1]
-    structure(list(
-      call = object$call, coefficients = rslt, CIC = CIC, CIC.un = CIC.un, df.null = df.null, df.residual = df.residual,
-      null.deviance = null.deviance, deviance = deviance, family = family, dispersion = dispersion
-    ), class = "summary.csvy")
+    structure(list(call = object$call, coefficients = rslt, CIC = CIC, CIC.un = CIC.un, df.null = df.null, df.residual = df.residual,
+                   null.deviance = null.deviance, deviance = deviance, family = family), class = "summary.csvy")
+    
+    #structure(list(call = object$call, coefficients = rslt, CIC = CIC, df.residual = df.residual,
+    #               null.deviance = null.deviance, deviance = deviance, family = family), class = "summary.csvy")
+    #ans = list(call = x$call, coefficients = rslt, CIC = CIC, 
+    #           null.deviance = null.deviance, deviance = deviance, 
+    #           family = family)
+    #class(ans) = "summary.csvy"
+    #ans
   } else {
-    structure(list(
-      call = object$call, CIC = CIC, CIC.un = CIC.un, df.null = df.null, df.residual = df.residual,
-      null.deviance = null.deviance, deviance = deviance, family = family, dispersion = dispersion
-    ), class = "summary.csvy")
-    # warning("summary function for a csvy object only works when test = TRUE!")
+    structure(list(call = object$call, CIC = CIC, CIC.un = CIC.un, df.null = df.null, df.residual = df.residual,
+                   null.deviance = null.deviance, deviance = deviance, family = family), class = "summary.csvy")
+    #warning("summary function for a csvy object only works when test = TRUE!")
   }
 }
 
@@ -4006,59 +4102,59 @@ predict.csvy = function(object, newdata=NULL, type=c("link","response"),
 #---------------------------------------------------------------------------------------------------------------------------------------
 #routines modified from methods of svyby or svyglm, svyrepglm
 #---------------------------------------------------------------------------------------------------------------------------------------
-# dotchart.csvy <- function(x,...,pch = 19){
-#   xx <- x$ans.unc_cp
+# dotchart.csvy = function(x,...,pch = 19){
+#   xx = x$ans.unc_cp
 #   dotchart(xx,...,pch = pch)
 # }
 
 #---------------------------------------------------------------------------------------------------------------------------------------
-deff.csvy <- function(object,...) {
-  x <- object$ans.unc_cp
+deff.csvy = function(object,...) {
+  x = object$ans.unc_cp
   deff(x,...)
 }
 
 #---------------------------------------------------------------------------------------------------------------------------------------
-barplot.csvy <- function(height, beside = TRUE,...){
-  x <- height$ans.unc_cp
+barplot.csvy = function(height, beside = TRUE,...){
+  x = height$ans.unc_cp
   #survey:::barplot.svyby(xx, beside = TRUE,...)
   barplot(x, beside = TRUE,...)
 }
 
-#plot.csvy <- barplot.csvy
+#plot.csvy = barplot.csvy
 #---------------------------------------------------------------------------------------------------------------------------------------
-SE.csvy <- function(object,...){
-  x <- object$ans.unc_cp
+SE.csvy = function(object,...){
+  x = object$ans.unc_cp
   SE(x,...)
 }
 
 #---------------------------------------------------------------------------------------------------------------------------------------
-coef.csvy <- function(object, ...) {
-  x <- object$ans.unc_cp
+coef.csvy = function(object, ...) {
+  x = object$ans.unc_cp
   coef(x,...)
 }
 
 #---------------------------------------------------------------------------------------------------------------------------------------
-svycontrast.csvy <- function(stat, contrasts,...) {
-  x <- stat$ans.unc_cp
+svycontrast.csvy = function(stat, contrasts,...) {
+  x = stat$ans.unc_cp
   svycontrast(x, contrasts,...)
 }
 
 #---------------------------------------------------------------------------------------------------------------------------------------
 #fix
-ftable.csvy <- function(x,...) {
-  xx <- x$ans.unc_cp
+ftable.csvy = function(x,...) {
+  xx = x$ans.unc_cp
   ftable(xx,...)
 }
 
 #---------------------------------------------------------------------------------------------------------------------------------------
-# confint.csvyby <- function(object, parm, level = 0.95, df = Inf,...){
-#   x <- object$ans.unc_cp
+# confint.csvyby = function(object, parm, level = 0.95, df = Inf,...){
+#   x = object$ans.unc_cp
 #   confint(x, parm, level, df,...)
 # }
 
 #---------------------------------------------------------------------------------------------------------------------------------------
-# deff.csvyby <- function(object,...){
-#   x <- object$ans.unc_cp
+# deff.csvyby = function(object,...){
+#   x = object$ans.unc_cp
 #   if(missing(x) | is.null(x)){
 #     stop("only works when the fit is a class of svyby!")
 #   }
