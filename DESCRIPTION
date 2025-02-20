@@ -1,9 +1,9 @@
 Package: csurvey
 Type: Package
 Title: Constrained Regression for Survey Data
-Version: 1.9
-Date: 2023-09-23
-Author: Xiyue Liao 
+Version: 1.10
+Date: 2025-02-20
+Authors@R: person("Xiyue", "Liao", email = "xliao@sdsu.edu", role = c("aut", "cre"), comment = c(ORCID = "0000-0002-4508-9219"))
 Maintainer: Xiyue Liao <xliao@sdsu.edu>
 Description: Domain mean estimation with monotonicity or block monotone constraints. See Xu X, Meyer MC and Opsomer JD (2021)<doi:10.1016/j.jspi.2021.02.004> for more details. 
 License: GPL (>= 2)
@@ -13,5 +13,6 @@ Imports: coneproj, purrr, stats, igraph, graphics, grDevices, MASS,
 NeedsCompilation: no
 ByteCompile: true
 Repository: CRAN
-Packaged: 2023-09-23 22:56:29 UTC; xliao
-Date/Publication: 2023-09-23 23:40:02 UTC
+Packaged: 2025-02-20 17:45:19 UTC; xliao
+Date/Publication: 2025-02-20 20:20:02 UTC
+Author: Xiyue Liao [aut, cre] (<https://orcid.org/0000-0002-4508-9219>)

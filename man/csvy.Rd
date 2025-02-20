@@ -54,7 +54,7 @@ csvy(formula, design, subset=NULL, nD=NULL, family=stats::gaussian(),
     A formula object which gives a symbolic description of the model to be fitted. It has the form "response ~ predictor". The response is a vector of length \eqn{n}. A predictor can be a non-parametrically modelled variable with a monotonicity or convexity restriction, or a combination of both. In terms of a non-parametrically modelled predictor, the user is supposed to indicate the relationship between the domain mean and a predictor \eqn{x} in the following way:
 
     Assume that \eqn{\mu} is the vector of domain means and \eqn{x} is a predictor:
-    \itemize{
+    \describe{
     \item{incr(x): }{\eqn{\mu} is increasing in \eqn{x}.}
     \item{decr(x): }{\eqn{\mu} is decreasing in \eqn{x}.}
     \item{block.Ord(x): }{\eqn{\mu} is has a block ordering in \eqn{x}.}
@@ -199,7 +199,7 @@ values of covariates.  When \code{newdata} are the population mean it
 gives the regression estimator of the mean, and when \code{newdata} are
 the population totals and \code{total} is specified it gives the
 regression estimator of the population total.  Regression estimators of
-mean and total can also be obtained with \code{\link{calibrate}}.
+mean and total can also be obtained with \code{\link[survey]{calibrate}}.
 
 %\code{coef}
 
@@ -215,11 +215,11 @@ mean and total can also be obtained with \code{\link{calibrate}}.
 }
 
 \seealso{ 
-  \code{\link{plotpersp}}, to create a 3D Plot for a csvy Object
+  \code{\link[cgam]{plotpersp}}, to create a 3D Plot for a csvy Object
   
-  \code{\link{incr}}, to specify an increasing shape-restriction in a csvy Formula
+  \code{\link[cgam]{incr}}, to specify an increasing shape-restriction in a csvy Formula
   
-  \code{\link{decr}}, to specify an decreasing shape-restriction in a csvy Formula
+  \code{\link[cgam]{decr}}, to specify an decreasing shape-restriction in a csvy Formula
 }
 
 

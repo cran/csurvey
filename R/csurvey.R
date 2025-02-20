@@ -1145,11 +1145,11 @@ csvy.fit = function(design, family=stats::gaussian(), M=NULL, relaxes=NULL,
 #inherit from cgam
 #apply plotpersp to a csvy.fit object
 #####################################
-#plotpersp = function(object,...) {
-#x1nm = deparse(substitute(x1))
-#x2nm = deparse(substitute(x2))
+# plotpersp = function(object,...) {
+# #x1nm = deparse(substitute(x1))
+# #x2nm = deparse(substitute(x2))
 #  UseMethod("plotpersp", object)
-#}
+# }
 
 #--------------------------------------------------
 #ci can be ci or upp
