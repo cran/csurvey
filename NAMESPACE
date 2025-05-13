@@ -1,29 +1,42 @@
-export("csvy", "block.Ord")
-import("survey", "cgam")
+export("csvy", "block.Ord", "plot.csvy", "plot_csvy_control", "plotpersp_csvy_control")
+import("survey")
 importFrom("coneproj", "coneA", "coneB")
 importFrom("igraph", "graph_from_adjacency_matrix", "clusters")
 importFrom("MASS", "ginv", "mvrnorm")
 importFrom("Matrix", "bdiag", "sparseMatrix")
-#importFrom("cgam", "incr", "decr", "plotpersp")
+importFrom("cgam", "plotpersp", "plotpersp_control", "incr", "decr")
 importFrom("purrr", "map_dbl", "map")
-importFrom("stats", "pbeta", "fitted", "gaussian", "median", 
+importFrom("utils", "capture.output", "modifyList")
+importFrom("data.table", "as.data.table", ":=", ".I")
+importFrom("stats", "family", "pbeta", "fitted", "gaussian", "median", 
            "model.frame", "model.matrix", "model.response", "rnorm", 
            "as.formula", "sd", "make.link", "qnorm", "vcov", "aggregate",
            "coef", "delete.response", "formula", "predict",
-           "printCoefmat", "terms", "ftable", "resid")
+           "printCoefmat", "terms", "ftable", "resid", "setNames", "na.omit", "reformulate", "terms.formula")
 importFrom("Matrix", "bdiag", "rankMatrix")
 importFrom("graphics", "par", "persp", "grid", "legend", "plot", "barplot", "points", "segments")
 importFrom("grDevices", "topo.colors", "cm.colors", "heat.colors", "terrain.colors", "rgb","col2rgb")
+importFrom("dplyr", "mutate", "everything", "bind_rows", "filter")
+importFrom("tibble", "tibble")
+importFrom(zeallot, "%<-%")
+importFrom("ggplot2", "guides", "guide_legend", "geom_pointrange", "ggplot", "aes", "geom_line", "geom_point", "geom_ribbon", "geom_vline",
+           "scale_color_manual", "scale_fill_manual", "scale_shape_manual",
+           "scale_x_continuous", "scale_y_continuous", "labs", "theme_minimal", "theme",
+           "element_text", "annotate", "expand_limits", "expansion", "margin")
 
+S3method(plot, csvy)
 S3method(fitted, csvy)
 S3method(print, csvy)
 S3method(plotpersp, csvy)
 
+S3method(ftable, csvy)
+S3method(barplot, csvy)
 S3method(summary, csvy)
 S3method(print, summary.csvy)
 S3method(predict, csvy)
 S3method(confint, csvy)
 S3method(vcov, csvy)
 S3method(coef, csvy)
+
 
 

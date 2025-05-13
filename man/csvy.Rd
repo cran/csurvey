@@ -31,8 +31,8 @@ Note that when there is any empty domain, the user must specify the total number
 }
 
 \usage{
-csvy(formula, design, subset=NULL, nD=NULL, family=stats::gaussian(),
-    amat=NULL, level=0.95, n.mix=100L, test=TRUE,...)
+csvy(formula, design, family=stats::gaussian(), multicore=getOption("csurvey.multicore"), 
+  level=0.95, n.mix=100L, test=FALSE, subset=NULL)
 \method{summary}{csvy}(object,...)
 \method{vcov}{csvy}(object,...)
 \method{coef}{csvy}(object,...)
@@ -60,38 +60,35 @@ csvy(formula, design, subset=NULL, nD=NULL, family=stats::gaussian(),
     \item{block.Ord(x): }{\eqn{\mu} is has a block ordering in \eqn{x}.}
     }
 }
-  \item{design}{
+\item{design}{
 A survey design, which must be specified by the svydesign routine in the survey package.
-}
-
-\item{subset}{
-  Expression to select a subpopulation.
-}
-
-  \item{nD}{
-  Total number of domains.
 }
 
 \item{family}{
   A parameter indicating the error distribution and link function to be used in the model. It can be a character string naming a family function or the result of a call to a family function. This is borrowed from the glm routine in the stats package. There are four families used in csvy: Gaussian, binomial, poisson, and Gamma. 
 }
 
-  \item{amat}{
-A \eqn{k \times M} matrix imposing shape constraints in each dimension, where \eqn{M} is the
-total number of domains. If the user doesn't provide the constraint matrix, a subroutine in the csurvey package will create a constraint matrix according to shape constraints specified in the formula. The default is amat = NULL.
+\item{multicore}{
+A parameter retrieving the current global option for "csurvey.multicore" and assigns its value to the multicore variable, allowing the function to respect a user-defined setting for parallel processing behavior across the package.
 }
-  \item{level}{
+
+\item{level}{
 Confidence level of the approximate confidence surfaces. The default is 0.95.
 }
   \item{n.mix}{
  The number of simulations used to get the approximate confidence intervals or surfaces. If n.mix = 0, no simulation will be done and the face of the final projection will be used to compute the covariance matrix of the constrained estimate. The default is n.mix = 100L.
 }
   \item{test}{
-A logical scalar. If test == TRUE, then the p-value for the test \eqn{H_0:\theta} is in \eqn{V} versus \eqn{H_1:\theta} is in \eqn{C} is returned. \eqn{C} is the constraint cone of the form \eqn{\{\beta: A\beta \ge 0\}}, and \eqn{V} is the null space of \eqn{A}. The default is test = TRUE.
+A logical scalar. If test == TRUE, then the p-value for the test \eqn{H_0:\theta} is in \eqn{V} versus \eqn{H_1:\theta} is in \eqn{C} is returned. \eqn{C} is the constraint cone of the form \eqn{\{\beta: A\beta \ge 0\}}, and \eqn{V} is the null space of \eqn{A}. The default is test = FALSE.
 }
 
- \item{...}{
-  Other arguments
+
+\item{subset}{
+  Expression to select a subpopulation.
+}
+
+\item{...}{
+  Extra arguments.
 }
 
 The \code{coef} function returns estimated systematic component of a csvy object.
@@ -244,134 +241,77 @@ mean and total can also be obtained with \code{\link[survey]{calibrate}}.
 
 
 \examples{
-data(api)
+library(cgam)
+incr <- cgam::incr
+# Example 1: monotonic in 1 predictor
+data(nhdat2, package = 'csurvey')
+#specify the design:
+dstrat <- svydesign(ids = ~id, strata = ~str, data = nhdat2, weight = ~wt)
 
-mcat = apipop$meals
-for(i in 1:10){mcat[trunc(apipop$meals/10)+1==i] = i}
-mcat[mcat==100]=10
-D1 = 10
-
-gcat = apipop$col.grad
-for(i in 1:10){gcat[trunc(apipop$col.grad/10)+1==i] = i}
-gcat[gcat >= 5] = 4
-D2 = 4
-
-nsp = c(200,200,200)  ## sample sizes per stratum
-
-es = sample(apipop$snum[apipop$stype=='E'&!is.na(apipop$avg.ed)&!is.na(apipop$api00)],nsp[1])
-ms = sample(apipop$snum[apipop$stype=='M'&!is.na(apipop$avg.ed)&!is.na(apipop$api00)],nsp[2])
-hs = sample(apipop$snum[apipop$stype=='H'&!is.na(apipop$avg.ed)&!is.na(apipop$api00)],nsp[3])
-sid = c(es,ms,hs)
-
-pw = 1:6194*0+4421/nsp[1]
-pw[apipop$stype=='M'] = 1018/nsp[2]
-pw[apipop$stype=='H'] = 755/nsp[3]
-
-fpc = 1:6194*0+4421
-fpc[apipop$stype=='M'] = 1018
-fpc[apipop$stype=='H'] = 755
-
-strsamp = cbind(apipop,mcat,gcat,pw,fpc)[sid,]
-
-dstrat = svydesign(ids=~snum, strata=~stype, fpc=~fpc, data=strsamp, weight=~pw)
-rds = as.svrepdesign(dstrat, type="JKn")
-
-# Example 1: monotonic in one dimension
-ansc1 = csvy(api00~decr(mcat), design=rds, nD=D1)
-# checked estimated domain means
-# ansc1$muhat
-
-# Example 2: monotonic in three dimensions
-D1 = 5
-D2 = 5
-D3 = 6
-Ds = c(D1, D2, D3)
-M = cumprod(Ds)[3]
-
-x1vec = 1:D1
-x2vec = 1:D2
-x3vec = 1:D3
-grid = expand.grid(x1vec, x2vec, x3vec)
-N = M*100*4
-Ns = rep(N/M, M)
-
-mu.f = function(x) {
-  mus = x[1]^(0.25)+4*exp(0.5+2*x[2])/(1+exp(0.5+2*x[2]))+sqrt(1/4+x[3])
-  mus = as.numeric(mus$Var1)
-  return (mus)
-}
-
-mus = mu.f(grid)
-
-H = 4
-nh = c(180,360,360,540)
-n = sum(nh)
-Nh = rep(N/H, H)
-
-#generate population
-y = NULL
-z = NULL
-
+#uncomment to use parallel computing:
+#options(csurvey.multicore=TRUE)
+#mixture-variance-covariance matrix is simulated
 set.seed(1)
-for(i in 1:M){
-  Ni = Ns[i]
-  mui = mus[i]
-  ei = rnorm(Ni, 0, sd=1)
-  yi = mui + ei
-  y = c(y, yi)
-  zi = i/M + rnorm(Ni, mean=0, sd=1)
-  z = c(z, zi)
+ans <- csvy(chol ~ incr(age), design = dstrat, n.mix=5)
+
+#check the constrained fit vs the unconstrained fit
+summary(ans)
+plot(ans, type = 'both')
+
+\dontrun{
+# Example 2: monotonic in 2 predictors and unconstrained in a 3rd predictor
+data(nhdat2, package = 'csurvey')
+#specify the design:
+dstrat <- svydesign(ids = ~id, strata = ~str, data = nhdat2, weight = ~wt)
+
+#use parallel computing:
+#options(csurvey.multicore=TRUE)
+#mixture-variance-covariance matrix is simulated
+#Average cholestorel level increases in age, waist, and unconstrained in income
+set.seed(1)
+ans <- csvy(chol ~ incr(age)*incr(wcat)*icat, design = dstrat, test=FALSE, n.mix=5)
+
+#visualize the constrained estimation with confidence bands
+plot(ans, x1='icat', x2='wcat')
+
+#create control object
+ctl <- plot_csvy_control(
+  ribbon_fill = "pink",
+  x1lab = 'income',
+  x2lab = 'waist'
+)
+
+plot(ans, x1='icat', x2='wcat', control=ctl)
 }
 
-x1 = rep(grid[,1], times=Ns)
-x2 = rep(grid[,2], times=Ns)
-x3 = rep(grid[,3], times=Ns)
-domain = rep(1:M, times=Ns)
+# Example 3: example with a binomial response
+library(NHANES)
+library(survey)
+data(NHANES)
 
-cts = quantile(z, probs=seq(0,1,length=5))
-strata = 1:N*0
-strata[z >= cts[1] & z < cts[2]] = 1
-strata[z >= cts[2] & z < cts[3]] = 2
-strata[z >= cts[3] & z < cts[4]] = 3
-strata[z >= cts[4] & z <= cts[5]] = 4
-freq = rep(N/(length(cts)-1), n)
+nh <- subset(NHANES, !is.na(Education) & !is.na(BMI) & !is.na(Weight))
+nh$DiabetesBin <- as.integer(nh$Diabetes == "Yes")
+nh$BMIgroup <- cut(nh$BMI, breaks = c(0, 18.5, 25, 30, 35, 40, Inf), labels = FALSE)
 
-w0 = Nh/nh
-w = 1:N*0
-w[strata == 1] = w0[1]
-w[strata == 2] = w0[2]
-w[strata == 3] = w0[3]
-w[strata == 4] = w0[4]
-pop = data.frame(y = y, x1 = x1, x2 = x2, x3 = x3, domain = domain, strata = strata, w=w)
-ssid = stratsample(pop$strata, c("1"=nh[1], "2"=nh[2], "3"=nh[3], "4"=nh[4]))
-sample.stsi = pop[ssid, ,drop=FALSE]
-ds = svydesign(id=~1, strata =~strata, fpc=~freq, weights=~w, data=sample.stsi)
+# specify the design
+dsgn <- svydesign(ids = ~1, strata = ~BMIgroup, weights = ~Weight, data = nh)
 
+ans <- csvy(DiabetesBin ~ decr(Education) * incr(BMIgroup), design = dsgn,
+  family = quasibinomial(link='logit'), n.mix=5)
 
-#domain means are increasing w.r.t x1, x2 and block monotonic in x3
-ord = c(1,1,2,2,3,3)
-ans = csvy(y~incr(x1)*incr(x2)*block.Ord(x3,order=ord), design=ds, nD=M, test=FALSE, n.mix=0)
+summary(ans)
 
-#3D plot of estimated domain means: x1 and x2 with confidence intervals
-plotpersp(ans, ci = "both")
+plot(ans, x1 = 'BMIgroup', x2 = 'Education')
 
+ctl <- plot_csvy_control(
+  x1size = 1.5,
+  x2size = 2,
+  angle = 45,
+  hjust = .3
+)
 
-#3D plot of estimated domain means: x3 and x2
-plotpersp(ans, x3, x2)
+plot(ans, x1 = 'Education', x2 = 'BMIgroup', control = ctl)
 
-#3D plot of estimated domain means: x3 and x2 for each domain of x1
-plotpersp(ans, x3, x2, categ="x1")
-
-#3D plot of estimated domain means: x3 and x2 for each domain of x1
-plotpersp(ans, x3, x2, categ="x1", NCOL = 3)
-
-# Example 3: unconstrained in one dimension
-
-#no constraint on x1
-ans = csvy(y~x1*incr(x2)*incr(x3), design=ds, test=FALSE, n.mix=0) 
-
-#3D plot of estimated domain means: x1 and x2
-plotpersp(ans)
 
 }
 

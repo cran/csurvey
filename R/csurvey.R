@@ -1,184 +1,281 @@
 #############################
 ## main routine for the user#
 #############################
-csvy = function(formula, design, subset=NULL, nD=NULL, family=stats::gaussian(),
-                 amat=NULL, level=0.95, n.mix=100L, test=TRUE,...) {
-  cl = match.call()
-  subset = substitute(subset)
-  subset = eval(subset, model.frame(design), parent.frame())
-  if (!is.null(subset)){
-    if (any(is.na(subset)))
-      stop("subset must not contain NA values")
-    design = design[subset,]
+csvy = function(formula, design, family=stats::gaussian(), multicore=getOption("csurvey.multicore"), level=0.95, n.mix=100L, test=FALSE, subset=NULL) {
+  cl <- match.call()
+  # Handle subset argument
+  subset_expr <- substitute(subset)
+  subset_eval <- eval(subset_expr, model.frame(design), parent.frame())
+  if (!is.null(subset_eval)) {
+    if (anyNA(subset_eval)) stop("subset must not contain NA values")
+    design <- design[subset_eval, ]
+  } else {
+    design0 <- design
+    cleaned <- get_complete_design(formula, design)
+    #mf <- cleaned$model_frame
+    design <- cleaned$design
   }
+  #names(design$variables) <- gsub(" ", "_", names(design$variables))
   if (is.character(family))
-    family = get(family, mode = "function", envir = parent.frame())
+    family <- get(family, mode = "function", envir = parent.frame())
   if (is.function(family))
-    family = family()
+    family <- family()
   if (is.null(family$family))
     stop("'family' not recognized!")
-  labels = NULL
-  mf = match.call(expand.dots = FALSE)
-  m = match("formula", names(mf), 0L)
-  mf = mf[c(1L, m)]
-  mf[[1L]] = as.name("model.frame")
-  mf = eval(mf, model.frame(design), parent.frame())
-  ynm = names(mf)[1]
-  mt = attr(mf, "terms")
-  y = model.response(mf, "any")
-  shapes_add = NULL
-  xmat_add0 = NULL
-  xmat_add = NULL
-  xnms_add = NULL
-  nums_add = NULL
-  xid_add = 1
-  relaxes = NULL
-  block.ave.lst = vector("list", length = (ncol(mf)-1))
-  block.ord.lst = vector("list", length = (ncol(mf)-1))
-  cnms = colnames(mf)
-  for (i in 2:ncol(mf)) {
-    if (is.numeric(attributes(mf[,i])$shape)) {
-      labels = c(labels, "additive")
-      shapes_add = c(shapes_add, attributes(mf[,i])$shape)
-      reli = attributes(mf[,i])$relax
-      if (is.null(reli)) {
-        reli = FALSE
-      } else {
-        reli = TRUE
+  labels <- NULL
+  formula <- terms.formula(formula)
+  #print (formula)  
+  #mf <- match.call(expand.dots = FALSE)
+  #m <- match("formula", names(mf), 0L)
+  #mf <- mf[c(1L, m)]
+  #mf[[1L]] <- as.name("model.frame")
+  #mf <- eval(mf, model.frame(design), parent.frame())
+  #mf <- model.frame(formula, data = design$variables)
+  mf <- model.frame(formula, data = get_design_variables(design))
+  ynm <- names(mf)[1]
+  mt <- attr(mf, "terms")
+  y <- model.response(mf, "any")
+  # Initialization
+  n_pred <- ncol(mf) - 1
+  block.ave.lst <- vector("list", length = n_pred)
+  block.ord.lst <- vector("list", length = n_pred)
+  xmat_add <- NULL
+  #xmat_add0 <- NULL
+  xnms_add <- NULL
+  shapes_add <- NULL
+  relaxes <- NULL
+  # process each predictor
+  cnms <- colnames(mf)
+  #print (cnms)
+  replaced <- as.data.frame(matrix(FALSE, nrow = 1, ncol = n_pred))
+  #print (replaced)
+  levels_old <- vector("list", length = n_pred)
+  for (i in seq(2, n_pred+1)) {
+    xi <- mf[, i]
+    #print (class(xi))
+    #print (is.character(levels(xi)))
+    attr_xi <- attributes(xi)
+    #print (cnms[i])
+    #print (attr_xi)
+    shape <- attr_xi$shape
+    relax <- isTRUE(attr_xi$relax)
+    block_type <- attr_xi$categ
+    block_order <- attr_xi$order
+    if (!is.null(shape) && is.numeric(shape)) {
+      labels <- c(labels, "additive")
+      shapes_add <- c(shapes_add, shape)
+      relaxes <- c(relaxes, relax)
+      if(is.character(xi)){
+        xi <- factor(xi)
       }
-      relaxes = c(relaxes, reli)
-      if (is.factor(mf[,i]) && is.character(levels(mf[,i]))) {
-        xmat_add = cbind(xmat_add, as.numeric(mf[,i]))
+      if (is.factor(xi)) {
+        #if (is.factor(xi)){
+        #xi_mat <- as.numeric(xi)
+        #print (levels(xi))
+        #test!
+        tbl <- table(xi)
+        levels_old_xi <- names(tbl[tbl > 0])
+        zero_obs_levels <- names(tbl[tbl == 0])
+        if (length(zero_obs_levels) > 0) {
+          if (!exists("zero_level_warnings")) zero_level_warnings <- list()
+          zero_level_warnings[[attr_xi$nm %||% cnms[i]]] <- zero_obs_levels
+        }
+        #levels_old_xi <- levels(xi)
+        #print (is.character(levels(xi)))
+        if(is.character(levels_old_xi)){
+          #tbl <- table(xi)
+          #levels_old <- names(tbl[tbl > 0])
+          xi_mat <- recode_ordered_factor_to_numeric(xi, levels_wanted = levels_old_xi)
+          #cat(attr_xi$nm, '\n')
+          design$variables[[attr_xi$nm]] <- xi_mat
+          #print(head(design$variables[[attr_xi$nm]]))
+          replaced[[i-1]] <- TRUE
+          levels_old[[i-1]] <- levels_old_xi
+        } else {
+          xi_mat <- as.numeric(xi)
+        }
       } else {
-        xmat_add = cbind(xmat_add, mf[,i])
+        xi_mat <- xi
       }
-      xmat_add0 = cbind(xmat_add0, mf[,i])
-      xnms_add = c(xnms_add, attributes(mf[,i])$nm)
-      xid_add = xid_add + 1
+      xmat_add <- cbind(xmat_add, xi_mat)
+      #xmat_add0 <- cbind(xmat_add0, xi)
+      xnms_add <- c(xnms_add, attr_xi$nm)
+      block.ord.lst[[i - 1]] <- if (block_type == "block.ord") block_order else -1
+      block.ave.lst[[i - 1]] <- if (block_type == "block.ave") block_order else -1
+    } else {
+      # No shape info
+      labels <- c(labels, "additive")
+      shapes_add <- c(shapes_add, 0)
+      relaxes <- c(relaxes, relax)
+      #test
+      if(is.character(xi)) {
+        xi <- factor(xi)
+      }
       
-      block.ord.lst[[i-1]] = -1
-      block.ave.lst[[i-1]] = -1
-      if ((attributes(mf[,i])$categ == "block.ord")) {
-        block.ord.lst[[i-1]] = attributes(mf[,i])$order
+      if(is.factor(xi)){
+        #levels_old_xi <- levels(xi)
+        tbl <- table(xi)
+        levels_old_xi <- names(tbl[tbl > 0])
+        zero_obs_levels <- names(tbl[tbl == 0])
+        if (length(zero_obs_levels) > 0) {
+          if (!exists("zero_level_warnings")) zero_level_warnings <- list()
+          zero_level_warnings[[attr_xi$nm %||% cnms[i]]] <- zero_obs_levels
+        }
+        if(is.character(levels_old_xi)){
+          #print ((is.character(levels(xi))))
+          #levels_old <- levels(xi)
+          #tbl <- table(xi)
+          #levels_old <- names(tbl[tbl > 0])
+          xi <- recode_ordered_factor_to_numeric(xi, levels_wanted = levels_old_xi)
+          #cat(attr_xi$nm, '\n')
+          #print (head(design$variables[[attr_xi$nm]]))
+          design$variables[[cnms[i]]] <- xi
+          #print(head(design$variables[[attr_xi$nm]]))
+          #print (replaced[[i-1]])
+          replaced[[i-1]] <- TRUE
+          levels_old[[i-1]] <- levels_old_xi
+        } else {
+          xi <- as.numeric(xi)
+        }
       }
-      if ((attributes(mf[,i])$categ == "block.ave")) {
-        block.ave.lst[[i-1]] = attributes(mf[,i])$order
-      }
-    } else if (is.null(attributes(mf[,i])$shape)) {
-      block.ord.lst[[i-1]] = -1
-      block.ave.lst[[i-1]] = -1
-      reli = attributes(mf[,i])$relax
-      if (is.null(reli)) {
-        reli = FALSE
-      } else {
-        reli = TRUE
-      }
-      relaxes = c(relaxes, reli)
-      shapes_add = c(shapes_add, 0)
-      labels = c(labels, "additive")
-      xmat_add = cbind(xmat_add, mf[,i])
-      xmat_add0 = cbind(xmat_add0, mf[,i])
-      xnms_add = c(xnms_add, cnms[i])
-      xid_add = xid_add + 1
+      
+      xmat_add <- cbind(xmat_add, xi)
+      #xmat_add0 <- cbind(xmat_add0, xi)
+      xnms_add <- c(xnms_add, cnms[i])
+      block.ord.lst[[i - 1]] <- -1
+      block.ave.lst[[i - 1]] <- -1
     }
   }
-  
-  xid_add = 2:ncol(mf)
-  #xmat_add = mf[, -1, drop = FALSE]
+  #print (replaced)
+  colnames(replaced) <- xnms_add 
   #how to handle ...?
   #fit = csvy.fit(design = design, fo = formula, subset = subset, family = family, M = nD, xm = xmat_add, xnms_add = xnms_add,
   #                sh = shapes_add, ynm = ynm, block.ave.lst = block.ave.lst, block.ord.lst = block.ord.lst,
   #                level = level, n.mix = n.mix, test = test,...)
-  fit = eval(call("csvy.fit", design = design, family = family, M = nD, 
-                   relaxes = relaxes, xm = xmat_add, xnms_add = xnms_add,
-                   sh = shapes_add, ynm = ynm, amat = amat,
-                   block.ave.lst = block.ave.lst, 
-                   block.ord.lst = block.ord.lst, 
-                   level = level, n.mix = n.mix, cl = cl, test = test))
-  fit$survey.design = design
-  fit$data = design$variables
-  fit$na.action = attr(mf, "na.action")
-  fit$call = cl
-  fit$family = family
-  fit$n.mix = n.mix
-  fit$terms = mt
-  fit$xmat_add = xmat_add 
-  fit$xmat_add0 = xmat_add0
-  fit$xnms_add = xnms_add
-  fit$shapes_add = shapes_add
-  fit$ynm = ynm
-  class(fit) = c("csvy", "cgam", "svyglm", "glm")
-  # classes = if (inherits(design, "svyrep.design")) {
-  #   c("svrepglm", "svyglm")
-  # } else {
-  #   "svyglm"
+  # dots <- match.call(expand.dots = FALSE)$...
+  # if (!("nD" %in% names(cl)) && "nD" %in% names(dots)) {
+  #   nD <- eval(dots$nD, parent.frame())
+  #   dots$nD <- NULL
   # }
-  # structure(c(fit, list(call = cl, n.mix = n.mix, xmat_add = xmat_add, xmat_add0 = xmat_add0, xnms_add = xnms_add, na.action = attr(mf, "na.action"), 
-  #                       shapes_add = shapes_add, ynm = ynm, family = family, terms = mt, survey.design = design, data = design$variables)),
-  #           class = c("csvy", "cgam", classes))
-  return (fit)
+  # if (!("amat" %in% names(cl)) && "amat" %in% names(dots)) {
+  #   amat <- eval(dots$amat, parent.frame())
+  #   dots$amat <- NULL
+  # }
+  #print (nD)
+  # print (relaxes)
+  # print (head(xmat_add))
+  # print (xnms_add)
+  # print (shapes_add)
+  # print (amat)
+  # print (block.ave.lst)
+  # print (block.ord.lst)
+  # args <- alist(design = design, family = family, M = nD, relaxes = relaxes, xm = xmat_add, xnms_add = xnms_add,
+  #  sh = shapes_add, ynm = ynm, amat = amat, block.ave.lst = block.ave.lst, block.ord.lst = block.ord.lst, level = level,
+  #  n.mix = n.mix, multicore = multicore, cl = cl,test = test)
+  #all_args <- c(args, dots)
+  #all_args <- args
+  #fit <- eval(as.call(c(quote(csvy.fit), all_args)), envir = parent.frame())
+  #cat('finished process')
+  #print (head(xmat_add))
+  if(all(shapes_add == 0)){
+    stop("No monotonic or partial-ordering is defined! use survey package instead!")
+  } else {
+    fit <- eval(call("csvy.fit", design = design, family = family, 
+                     relaxes = relaxes, xm = xmat_add, xnms_add = xnms_add,
+                     sh = shapes_add, y = y, ynm = ynm,
+                     block.ave.lst = block.ave.lst, 
+                     block.ord.lst = block.ord.lst, 
+                     level = level, n.mix = n.mix, multicore = multicore, 
+                     cl = cl, test = test))
+    #fit$survey.design = design
+    fit$survey.design = design0
+    fit$data = design$variables
+    fit$na.action = attr(mf, "na.action")
+    fit$call = cl
+    fit$family = family
+    #fit$n.mix = n.mix
+    fit$terms = mt
+    fit$xmat_add = xmat_add 
+    #fit$xmat_add0 = xmat_add0
+    fit$xnms_add = xnms_add
+    fit$shapes_add = shapes_add
+    fit$ynm = ynm
+    fit$levels_old = levels_old
+    fit$replaced = replaced
+    class(fit) = c("csvy", "cgam", "svyglm", "glm")
+    # classes = if (inherits(design, "svyrep.design")) {
+    #   c("svrepglm", "svyglm")
+    # } else {
+    #   "svyglm"
+    # }
+    # structure(c(fit, list(call = cl, n.mix = n.mix, xmat_add = xmat_add, xmat_add0 = xmat_add0, xnms_add = xnms_add, na.action = attr(mf, "na.action"), 
+    #                       shapes_add = shapes_add, ynm = ynm, family = family, terms = mt, survey.design = design, data = design$variables)),
+    #           class = c("csvy", "cgam", classes))
+    if (exists("zero_level_warnings")) {
+      cat("Note: Some factor levels had zero observations and were excluded:\n")
+      for (var in names(zero_level_warnings)) {
+        cat("-", var, ":", paste(zero_level_warnings[[var]], collapse = ", "), "\n")
+      }
+    }
+    return (fit)
+  }
 }
 
 ############
 ## csvy.fit#
 ############
 csvy.fit = function(design, family=stats::gaussian(), M=NULL, relaxes=NULL, 
-                    xm=NULL, xnms_add=NULL, sh=1, ynm=NULL, nd=NULL, 
+                    xm=NULL, xnms_add=NULL, sh=1, y=NULL, ynm=NULL, nd=NULL, 
                     ID=NULL, block.ave.lst=NULL, block.ord.lst=NULL, 
-                    amat=NULL, level=0.95, n.mix=100L, cl=NULL, test=TRUE,...){
+                    amat=NULL, level=0.95, n.mix=100L, multicore=getOption("csvy.multicore"), 
+                    cl=NULL, test=TRUE){
   #wp is population wt
   #Ds: observed domains?
   #make sure each column in xm is numeric:
-  #xm = map_dbl(xm, .f = function(.x) as.numeric(.x))
-  bool = apply(xm, 2, function(x) is.numeric(x))
-  if(any(!bool)){
-    xm = apply(xm, 2, function(x) as.numeric(x))
+  # stopifnot(is.data.frame(xm) || is.matrix(xm))
+  # Convert to data.frame (if matrix) and ensure all numeric
+  xm <- as.data.frame(xm)
+  for (j in seq_along(xm)) {
+    col <- xm[[j]]
+    if (is.factor(col)) {
+      xm[[j]] <- as.numeric(col)
+    }
   }
-  Ds = apply(xm, 2, function(x) length(unique(x)))
-  xm.red = unique(xm)
-  xvs2 = apply(xm.red, 2, function(x) sort(unique(x)))
-  if(is.matrix(xvs2)){
-    grid2 = expand.grid(as.data.frame(xvs2))
-  }else if(is.list(xvs2)){
-    grid2 = expand.grid(xvs2)
-  }
-  colnames(grid2) = xnms_add
-  df = design$variables
-  ds = design
+  colnames(xm) = xnms_add
+  # Number of unique values per column
+  Ds <- vapply(xm, function(x) length(unique(x)), integer(1))
+  # Unique combinations of rows
+  xm.red <- unique(xm)
+  #print (xm.red)
+  # Sorted unique values per column
+  xvs2 <- lapply(xm.red, function(x) sort(unique(x)))
+  # Generate full grid of combinations
+  grid2 <- expand.grid(xvs2, KEEP.OUT.ATTRS = FALSE, stringsAsFactors = FALSE)
+  nD <- n_total_domains <- NROW(grid2)
+  
+  colnames(grid2) <- xnms_add
+  df <- design$variables
+  ds <- design
   #sample sizes for each observed domain
   if(is.null(nd)){
     xm.df = as.data.frame(xm)
     nd = aggregate(list(nd = rep(1, nrow(xm.df))), xm.df, length)$nd
   }
   if(is.null(ID)){
-    #ID = apply(xm, 1, function(elem) which(apply(grid2, 1, function(gi) all(gi == elem))))
-    #new: for empty cell
-    if (length(Ds) == 1) {
-      ID = apply(xm, 1, function(elem) grid2[which(apply(grid2, 1, function(gi) all(gi == elem))),])
-    }
-    if (length(Ds) > 1) {
-      ID = apply(xm, 1, function(elem) which(apply(grid2, 1, function(gi) all(gi == elem))))
-    }
+    ID = match_rows(xm, grid2)
   }
+  
   ID = as.ordered(ID)
   uds = unique(ID)
   domain.ord = order(uds)
   uds = sort(uds)
   #new M:
   obs_cells = as.numeric(levels(uds))[uds]
-  #let user to define M?
-  if (is.null(M)) {
-    #some x won't start from 1:
-    #M = length(levels(uds))#wrong: cannot include empty cells
-    M = max(obs_cells)
-  }
-  
   Tot_obs = length(obs_cells)
-  #print (obs_cells)
-  #print (Max_obs)
   if (is.null(M)) {
     #stop("nD (total number of domains) is not provided! \n")
-    M = max(obs_cells)
+    #M = max(obs_cells)
+    M = nD
   } else if (M %% 1 != 0 | M <= 1) {
     stop(paste("nD (total number of domains) must be a positive integer > 1!", "\n"))
     #M = max(obs_cells)
@@ -190,15 +287,16 @@ csvy.fit = function(design, family=stats::gaussian(), M=NULL, relaxes=NULL,
   #new: to be used in makeamat_2d_block
   M_0 = M
   #if (any(class(ds) == "survey.design")) {
-  if (inherits(ds, "survey.design")) {
-    weights = 1/(ds$prob)
-  }
-  #if (any(class(ds) == "svyrep.design")) {
   if (inherits(ds, "svyrep.design")) {
-    weights = ds$pweights
+    weights <- ds$pweights
+  } else if (inherits(ds, "survey.design")) {
+    weights <- 1 / ds$prob
+  } else {
+    stop("Unsupported design object: must be 'survey.design' or 'svyrep.design'.")
   }
+  
   #Nhat and stratawt will follow the order: 1 to M
-  y = df[[ynm]]
+  #y = df[[ynm]] #not work if y is log(income) but df has income
   #test:
   if(family$family %in% c("binomial", "quasibinomial")){
     uvals = unique(y)
@@ -207,7 +305,7 @@ csvy.fit = function(design, family=stats::gaussian(), M=NULL, relaxes=NULL,
     } else {
       if(is.factor(y)){
         ulvls = levels(y)
-        success = ulvls[2]
+        success = ulvls[2] #same as glm; 2nd level is success
         y = ifelse(y == success, 1, 0)
       } 
     }
@@ -221,69 +319,26 @@ csvy.fit = function(design, family=stats::gaussian(), M=NULL, relaxes=NULL,
   y_ch_id = NULL
   
   #check more!
-  # if (length(Ds) == 1) {
-  #   for(i in 1:M){
-  #     udi = uds_num[i]
-  #     ps = which(ID %in% udi)
-  #     ysi = y[ps]
-  #     wi = weights[ps]
-  #     Nhi = sum(wi)
-  # 
-  #     Nhat[i] = Nhi
-  #     nd[i] = length(wi)
-  #     ys[[i]] = ysi
-  #     #new: for binomial
-  #     if (all(ysi == 0) | all(ysi == 1)) {
-  #       y_ch_id = c(y_ch_id, i)
-  #     }
-  #     stratawt[[i]] = wi
-  #     ybar_vec[i] = mean(ysi)
-  #   }
-  # }
-  
   if (length(Ds) >= 1) {
+    #test!
+    min_udi <- min(uds_num)
     for(udi in uds_num){
       ps = which(ID %in% udi)
       ysi = y[ps]
       wi = weights[ps]
       Nhi = sum(wi)
       
-      #check more
-      #Nhat[which(1:M %in% udi)] = Nhi
-      #nd[which(1:M %in% udi)] = length(wi)
-      #ys[[which(1:M %in% udi)]] = ysi
-      #print (which(1:M %in% udi)) #cannot be used in 1D case if uds_num not start from 1
-      #print (which(uds_num %in% udi)) #cannot be used, cannot handle empty cells
-      #print (udi)
-      #test!
-      if (min(uds_num) > 1) {
-        Nhat[udi - min(uds_num) + 1] = Nhi
-        nd[udi - min(uds_num) + 1] = length(wi)
-        ys[[udi - min(uds_num) + 1]] = ysi
-        #new: for binomial
-        if (all(ysi == 0) | all(ysi == 1)) {
-          y_ch_id = c(y_ch_id, udi- min(uds_num) + 1)
-        }
-        stratawt[[udi - min(uds_num) + 1]] = wi
-        ybar_vec[udi - min(uds_num) + 1] = mean(ysi)
-      } else {
-        Nhat[udi] = Nhi
-        nd[udi] = length(wi)
-        ys[[udi]] = ysi
-        #new: for binomial
-        if (all(ysi == 0) | all(ysi == 1)) {
-          #stop('check!')
-          y_ch_id = c(y_ch_id, udi)
-          #y_ch_id = c(y_ch_id, which(uds_num %in% udi))
-        }
-        
-        #stratawt[[i]] = wi
-        #ybar_vec[i] = mean(ysi)
-        #stratawt[[which(1:M %in% udi)]] = wi
-        #ybar_vec[which(1:M %in% udi)] = mean(ysi)
-        stratawt[[udi]] = wi
-        ybar_vec[udi] = mean(ysi)
+      idx <- udi - min_udi + 1
+      Nhat[idx] = Nhi
+      nd[idx] = length(wi)
+      ys[[idx]] = ysi
+      #new: for binomial
+      #print (ysi)
+      if (all(ysi == 0) | all(ysi == 1)) {
+        y_ch_id = c(y_ch_id, udi)
       }
+      stratawt[[idx]] = wi
+      ybar_vec[idx] = mean(ysi)
     }
   }
   
@@ -308,8 +363,9 @@ csvy.fit = function(design, family=stats::gaussian(), M=NULL, relaxes=NULL,
     
     if (any(ch)) {
       ps = which(ch)
-      for(i in 1:length(ps)) {
-        psi = ps[i]
+      #for(i in 1:length(ps)) {
+      for(psi in ps){
+        #psi = ps[i]
         nbor = y_ch_id2[psi]
         if (nbor == 1) {
           while(nbor %in% y_ch_id | is.null(ys[[nbor]])){
@@ -352,10 +408,12 @@ csvy.fit = function(design, family=stats::gaussian(), M=NULL, relaxes=NULL,
   obs_cells = which(nd > 0)
   fo = as.formula(paste0("~", ynm))
   #use fo2 for svyglm
-  xnms_add_fac = sapply(xnms_add, function(xnmi) paste0("factor(", xnmi, ")"))
-  #xnms_add_fac = xnms_add
-  #check more!
-  #xnms_fo_fac = paste(xnms_add_fac, collapse = "+")
+  xnms_add_fac <- sapply(xnms_add, function(xnmi) {
+    if (!isTRUE(all.equal(xnmi, make.names(xnmi)))) {
+      xnmi <- paste0("`", xnmi, "`")
+    }
+    paste0("factor(", xnmi, ")")
+  })
   xnms_fo_fac = paste(xnms_add_fac, collapse = "*")
   fo2 = formula(paste(ynm, "~", xnms_fo_fac))
   #new:
@@ -363,40 +421,43 @@ csvy.fit = function(design, family=stats::gaussian(), M=NULL, relaxes=NULL,
   xnms_fo = paste(xnms_add, collapse = "+")
   #new:
   if(family$family == "gaussian"){
-    ans.unc = suppressWarnings(svyby(formula=fo, by=~ID, design=ds, FUN=svymean, 
-                                     covmat=TRUE, multicore=FALSE, drop.empty.groups=FALSE))
+    #ans.unc = suppressWarnings(svyby(formula=fo, by=~ID, design=ds, FUN=svymean, 
+    #                                 covmat=TRUE, drop.empty.groups=FALSE))
+    ans.unc <- safe_svyby(formula = fo, by = ~ID, design = ds, FUN = svymean, drop.empty.groups = FALSE)
     v1 = vcov(ans.unc)
     etahatu = yvecu = yvec = ans.unc[[ynm]]
-    vsu = round(diag(v1), 5)
+    #vsu = round(diag(v1), 5)
+    vsu = diag(v1)
     ans.unc_null = svyglm(formula=fo2_null, design=ds, family=family)
     prior.weights = ans.unc_null$prior.weights
     ans.unc_cp_0 = ans.unc
   } else {
-    fo_by = if (length(xnms_add) == 1) formula(paste("~", xnms_add)) else formula(paste("~", paste(xnms_add, collapse = "+")))
-    ans.unc_cp_0 = suppressWarnings(svyby(formula = fo, by = fo_by, design = ds, FUN = svymean, keep.var = TRUE,
-                                           keep.names = TRUE, verbose = FALSE, vartype = "se",
-                                           drop.empty.groups = FALSE, covmat = TRUE,
-                                           na.rm.by = FALSE, na.rm.all = FALSE))
-    #ans.unc = svyglm(formula=fo2, design=ds, family=family, 
-    #                 control = list(epsilon = 1e-5, maxit = 12))
-    
-    #ans.unc = tryCatch({svyglm(formula=fo2, design=ds, family=family, 
-    #                           control = list(epsilon = 1e-7, maxit = 10))}, error = function(e) {e})
-    #if(inherits(ans.unc, 'error')) {
-    #  stop('check!')
-    #} 
-    
+    #fo_by = if (length(xnms_add) == 1) formula(paste("~", xnms_add)) else formula(paste("~", paste(xnms_add, collapse = "+")))
+    fo_by <- reformulate(xnms_add)
+    # ans.unc_cp_0 = suppressWarnings(svyby(formula = fo, by = fo_by, design = ds, FUN = svymean, keep.var = TRUE,
+    #                                      keep.names = TRUE, verbose = FALSE, vartype = "se",
+    #                                      drop.empty.groups = FALSE, covmat = TRUE,
+    #                                      na.rm.by = FALSE, na.rm.all = FALSE))
+    ans.unc_cp_0 <- safe_svyby(formula = fo, by = fo_by, design = ds, family = "binomial")
     ans.unc = suppressWarnings(svyglm(formula=fo2, design=ds, family=family, 
                                       control = list(epsilon = 1e-8, maxit = 10)))
-    
     prior.weights = ans.unc$prior.weights
     #create newdata
     newdata = grid2
+    #test more! colnames
+    #colnames(newdata) = xnms_add_fac
     empty_cells = which(nd == 0)
-    # #predict.svyglm will ignore empty cells for 1D?
+    #predict.svyglm will ignore empty cells for 1D?
     if(length(Ds) > 1 & length(empty_cells) > 0) {
       newdata = newdata[-empty_cells, ,drop=FALSE]
     }
+    
+    #new: more concise
+    # newdata <- if (length(Ds) > 1 && length(empty_cells) > 0) {
+    #   grid2[-empty_cells, , drop = FALSE]
+    # } else {
+    #   grid2
+    # }
     
     if(length(empty_cells) == 0){
       p.unc = predict(ans.unc, newdata, se.fit = TRUE, type = 'link', vcov = TRUE)
@@ -406,32 +467,19 @@ csvy.fit = function(design, family=stats::gaussian(), M=NULL, relaxes=NULL,
     }
     
     if(length(empty_cells) > 0){
+      #print (length(empty_cells))
       tt = delete.response(terms(formula(ans.unc)))
       mf = model.frame(tt, data = newdata)
       mm = model.matrix(tt, mf)
       #modified from predict.svrepglm
-      mm = mm[, -empty_cells]
-      vv = mm %*% vcov(ans.unc) %*% t(mm)
-      v1 = vv
-      etahatu = yvecu = yvec = NULL
+      mm = mm[, -empty_cells, drop = FALSE]
+      v1 = mm %*% vcov(ans.unc) %*% t(mm)
+      #etahatu = yvecu = yvec = NULL
       etahatu = drop(mm %*% coef(ans.unc))
-      yvecu = etahatu
-      yvec = etahatu
+      yvecu <- etahatu
+      yvec <- etahatu
       vsu = round(diag(v1), 5)
     }
-    
-    #temp fix:
-    # bool1 = any(yvec > 5)
-    # if (bool1) {
-    #   ps1 = which(yvec > 5)
-    #   etahatu[ps1] = yvecu[ps1] = yvec[ps1] = 5
-    # }
-    # bool2 = any(yvec < -5)
-    # if (bool2) {
-    #   ps2 = which(yvec < -5)
-    #   etahatu[ps2] = yvecu[ps2] = yvec[ps2] = -5
-    # }
-    # 
   }
   
   z.mult = qnorm((1 - level)/2, lower.tail=FALSE)
@@ -440,13 +488,19 @@ csvy.fit = function(design, family=stats::gaussian(), M=NULL, relaxes=NULL,
   uppu = yvecu + hlu
   #new: replace n=1 variance with the average
   #not to change vsu, which will be used for 
-  ps = which(round(diag(v1), 7) == 0L)
+  #ps = which(round(diag(v1), 7) == 0L)
+  ps = which(diag(v1) == 0L)
   diag(v1)[ps] = mean(diag(v1)[-ps])
   
   w = Nhat/sum(Nhat)
   Nd = length(Ds)
   
-  empty_cells = which(nd == 0)
+  empty_cells = zeros_ps = which(nd == 0)
+  ne = zeros = length(zeros_ps)
+  #nd_ne = nd[empty_cells]
+  nd_ne = rep(0, ne)
+  #small_cells = which(nd >= 1 & nd <= 10)
+  #nsm = length(small_cells)
   #temp
   #block.ave is not considered now
   #noord_cells will be a list, each elememt may have different length
@@ -467,20 +521,6 @@ csvy.fit = function(design, family=stats::gaussian(), M=NULL, relaxes=NULL,
       noord_cells = noord_cells[[1]]
     }
   }
-  ne = length(empty_cells)
-  nd_ne = nd[empty_cells]
-  small_cells = which(nd >= 1 & nd <= 10)
-  nsm = length(small_cells)
-  zeros = ones = 0
-  zeros_ps = NULL
-  
-  if(ne >= 1){
-    if (any(nd == 0)) {
-      zeros_ps = which(nd == 0)
-      zeros = length(zeros_ps)
-    }
-    #zeros = ne - ones
-  }
   
   pskeep = ps = NULL
   M_0 = M
@@ -488,7 +528,7 @@ csvy.fit = function(design, family=stats::gaussian(), M=NULL, relaxes=NULL,
   
   M = M - zeros
   imat = diag(M)
-  if (!is.null(zeros_ps)) {
+  if (ne >= 1) {
     w = w[-zeros_ps]
   }
   #define weight mat and its inverse here to avoid repeating it
@@ -613,36 +653,32 @@ csvy.fit = function(design, family=stats::gaussian(), M=NULL, relaxes=NULL,
   }
   
   #new: for binomial, to avoid extreme etahatun
-  if (ne == 0 & family$family %in% c("binomial", "quasibinomial")){
-    if(!is.null(log_odds)){
-      iter = 1
-      for(i in 1:n_y_merge){
-        y_merge_i = c(y_merge[, i])
-        for(j in 1:length(y_merge_i)){
-          ps_j = y_merge_i[j]
-          yvec[ps_j] = log_odds[iter]
-        }
-        iter = iter + 1
-      }
+  if(family$family %in% c("binomial", "quasibinomial")){
+    if(ne >= 1){
+      yvec_all = numeric(M_0)
+      yvec_all[-empty_cells] = yvec
     }
-    etahatu = yvecu = yvec
-  } 
-  
-  if (ne >= 1 & family$family %in% c("binomial", "quasibinomial")){
-    yvec_all = 1:M_0*0
-    yvec_all[-empty_cells] = yvec
+    if(ne == 0){
+      yvec_all = yvec
+    }
     if(!is.null(log_odds)){
       iter = 1
-      for(i in 1:n_y_merge){
+      for(i in seq_len(n_y_merge)){
         y_merge_i = c(y_merge[, i])
-        for(j in 1:length(y_merge_i)){
-          ps_j = y_merge_i[j]
+        #for(j in 1:length(y_merge_i)){
+        for(ps_j in y_merge_i){
+          #ps_j = y_merge_i[j]
           yvec_all[ps_j] = log_odds[iter]
         }
         iter = iter + 1
       }
     }
-    yvec = yvec_all[-empty_cells]
+    if(ne >= 1){
+      yvec = yvec_all[-empty_cells]
+    }
+    if(ne == 0){
+      yvec = yvec_all
+    }
     etahatu = yvecu = yvec
   }
   
@@ -652,44 +688,13 @@ csvy.fit = function(design, family=stats::gaussian(), M=NULL, relaxes=NULL,
     #if (family$family == "gaussian"){
     ans.polar = coneA(yvec, amat, w=w, msg=FALSE)
     etahat = round(ans.polar$thetahat, 10)
-    #ans.polar = tryCatch({coneA(yvec, amat, w=w, msg=FALSE)}, error = function(e) {e})
-    #if(inherits(ans.polar, 'error')) {
-    #  stop('check!')
-    #} else {
-    #  etahat = round(ans.polar$thetahat, 10)
-    #}
-    #ans.polar = coneA(yvec, amat, w=w, msg=FALSE)
-    #etahat = round(ans.polar$thetahat, 10)
-    # } else {
-    #   # umat = chol(v1)
-    #   # uinv = solve(umat)
-    #   # zvec = uinv %*% yvec
-    #   # atil = amat %*% umat
-    #   # ans.polar = coneA(zvec, atil, msg = FALSE)
-    #   # phihat = round(ans.polar$thetahat, 10)
-    #   # etahat = umat %*% phihat
-    # 
-    #   eans = eigen(v1, symmetric=TRUE)
-    #   evecs = eans$vectors; evecs = round(evecs, 8)
-    #   evals = eans$values
-    #   sm = 1e-4
-    #   if(any(evals < sm)){
-    #     evals[which(evals < sm)] = sm
-    #   }
-    #   umat = evecs %*% diag(sqrt(evals))
-    #   uinv = solve(umat) #solve will give singular error message when n is small
-    #   atil = amat %*% umat
-    #   zvec = uinv %*% yvec
-    #   ans.polar = coneA(zvec, atil, msg=FALSE)
-    #   phihat = round(ans.polar$thetahat, 10)
-    #   etahat = umat %*% phihat
-    # }
-    
     #new
     #muhat = etahat 
     face = ans.polar$face
+    facekeep = face #resid df
     #new: to be used in summary and anova
-    edf = 1.5*ans.polar$df
+    #edf = 1.5*ans.polar$df
+    edf = ans.polar$df #constr df
     if (length(face) == 0){
       mat = wt %*% v1
     } else {
@@ -717,13 +722,37 @@ csvy.fit = function(design, family=stats::gaussian(), M=NULL, relaxes=NULL,
   }
   
   acov = v1
-  #if(is.integer(n.mix) & n.mix > 0){
+  lwr = upp = NULL
+  use_parallel = isTRUE(getOption("csurvey.multicore", FALSE))
+  #decide how many cores to use
+  cores = 1
+  if(use_parallel){
+    cores = getOption("csurvey.cores", parallel::detectCores(logical = FALSE) - 1)
+    #cores = min(8, getOption("csurvey.cores", parallel::detectCores(logical = FALSE) - 1))
+    cores = max(1, cores)
+  }
+  #detect OS platform
+  is_windows = .Platform$OS.type == "windows"
+  
+  if (!is.numeric(n.mix) || length(n.mix) != 1) {
+    warning("Argument 'n.mix' must be a single numeric value. Setting n.mix to 10.")
+    n.mix <- 10
+  } else if (n.mix < 10) {
+    warning("There should be at least 10 simulations to compute the mixture covariance. Setting n.mix to 10.")
+    n.mix <- 10
+  } else if (n.mix %% 1 != 0) {
+    warning("Argument 'n.mix' must be an integer. Rounding down to the nearest integer.")
+    n.mix <- floor(n.mix)
+  }
+  
   if(n.mix > 0){
     #get the constrained variance-covariance matrix
-    lwr = upp = NULL
-    acov = v1
+    #lwr = upp = NULL
+    #acov = v1
     dp = -t(amat)
     dp = apply(dp, 2, function(e) e / (sum(e^2))^(.5))
+    #test!
+    #dp = Matrix(dp, sparse = TRUE)
     
     m_acc = M 
     sector = NULL
@@ -732,107 +761,54 @@ csvy.fit = function(design, family=stats::gaussian(), M=NULL, relaxes=NULL,
     iter = 1
     obs = 1:M
     #binomial can use mvrnorm?
-    ysims = MASS::mvrnorm(n.mix, mu=etahat, Sigma=v1)
-    for (iloop in 1:n.mix) {
-      #ysim is the group mean
-      #new:
-      ysim = ysims[iloop, ]
-      #new:
-      #if (family$family == "gaussian"){
-      ansi = coneA(ysim, amat, w=w, msg=FALSE)
-      etahati = round(ansi$thetahat, 10)
-      # } else {
-      #   # umat = chol(v1)
-      #   # uinv = solve(umat)
-      #   # zsim = uinv %*% ysim
-      #   # atil = amat %*% umat
-      # 
-      #   eans = eigen(v1, symmetric=TRUE)
-      #   evecs = eans$vectors; evecs = round(evecs, 8)
-      #   evals = eans$values
-      #   sm = 1e-4
-      #   if(any(evals < sm)){
-      #     evals[which(evals < sm)] = sm
-      #   }
-      #   umat = evecs %*% diag(sqrt(evals))
-      #   uinv = solve(umat) #solve will give singular error message when n is small
-      #   atil = amat %*% umat
-      #   zsim = uinv %*% ysim
-      # 
-      #   ansi = coneA(zsim, atil, msg=FALSE)
-      #   phihati = round(ansi$thetahat, 10)
-      #   etahati = umat %*% phihati
-      #   #etahati = L %*% phihati
-      # }
-      
-      facei = ansi$face
-      if (length(facei) == 0) {
-        next
+    ysims = rbind(MASS::mvrnorm(n.mix, mu=etahat, Sigma=v1))
+    #new: 2025
+    if(use_parallel && cores > 1){
+      #message(sprintf("Running in parallel using %d cores.", cores))
+      if(is_windows){
+        # Windows: use parLapply with a PSOCK cluster
+        cl = parallel::makeCluster(cores)
+        on.exit(parallel::stopCluster(cl))  # ensure cleanup
+        mixture_rslt = parallel::parLapply(cl, 1:n.mix, compute_mixture, ysims=ysims, amat=amat, w=w)
       } else {
-        sec = 1:nrow(amat)*0
-        sec[facei] = 1
-        
-        r = makebin(sec) + 1
-        if (iter == 1) {
-          df.face = rbind(df.face, c(r, 1))
-          sector = rbind(sector, sec)
-        } else {
-          if (r %in% df.face[,1]) {
-            ps = which(df.face[,1] %in% r)
-            df.face[ps,2] = df.face[ps,2] + 1
-          } else {
-            df.face = rbind(df.face, c(r, 1))
-            sector = rbind(sector, sec)
-          }
-        }
-        iter = iter+1
+        # Unix/macOS: use mclapply
+        mixture_rslt = parallel::mclapply(1:n.mix, compute_mixture, ysims=ysims, amat=amat, w=w)
+        #cat('finished mixture', '\n')
       }
+    }else{
+      #message("Running in serial mode.")
+      mixture_rslt = lapply(1:n.mix, compute_mixture, ysims=ysims, amat=amat, w=w)
     }
     
-    if (!is.null(df.face)) {
-      imat = diag(M)
-      sm_id = which((df.face[,2]/n.mix) < 1e-3)
-      if (any(sm_id)) {
-        df.face = df.face[-sm_id, ,drop=FALSE]
-        sector = sector[-sm_id, ,drop=FALSE]
-      }
-      nsec = nrow(df.face)
-      bsec = df.face
-      bsec[,2] = bsec[,2] / sum(bsec[,2])
-      
+    mixture_rslt <- do.call(rbind, mixture_rslt) |> as.data.frame()
+    bsec = aggregate(list(freq = rep(1, nrow(mixture_rslt))), mixture_rslt, length) |>
+      mutate(prob = freq / sum(freq)) |>
+      dplyr::select(freq, prob, everything())
+    
+    sector = bsec[, -c(1, 2), drop = FALSE]
+    nsec = NROW(sector)
+    imat = diag(M)
+    if(nsec > 0){
       acov = matrix(0, nrow=M, ncol=M)
-      #check more:
-      #if(family$family == 'gaussian') {
       wtinv = diag(1/w)
-      # } else {
-      #   #umat = chol(v1)
-      #   #wtinv = chol2inv(umat)
-      # 
-      #   eans = eigen(v1, symmetric=TRUE)
-      #   evecs = eans$vectors; evecs = round(evecs, 8)
-      #   evals = eans$values
-      #   sm = 1e-4
-      #   if(any(evals < sm)){
-      #     evals[which(evals < sm)] = sm
-      #   }
-      #   umat = evecs %*% diag(sqrt(evals))
-      #   uinv = solve(umat)
-      #   wtinv = uinv %*% t(uinv)
-      # }
-      
-      for(is in 1:nsec) {
-        jvec = sector[is, ]
-        smat = dp[,which(jvec==1),drop=FALSE]
-        wtinvs = wtinv %*% smat
-        pmat_is_p = wtinv %*% smat %*% solve(t(smat) %*% wtinv %*% smat) %*% t(smat)
-        pmat_is = (imat-pmat_is_p)
-        acov = acov + bsec[is,2]*pmat_is%*%v1%*%t(pmat_is)
+      for(isec in 1:nsec){
+        #print (isec)
+        jvec = sector[isec, ]
+        if(all(jvec == 0)){
+          next 
+        } else {
+          smat = dp[, which(jvec == 1), drop = FALSE]
+          wtinv_sm = wtinv %*% smat
+          pmat_is_p = wtinv_sm %*% solve(t(smat) %*% wtinv_sm, t(smat))
+          pmat_is = (imat - pmat_is_p)
+          p_j = bsec[isec,2]
+          acov = acov + p_j * pmat_is%*%v1%*%t(pmat_is)
+        }
       }
     } else {
       acov = v1
     }
     z.mult = qnorm((1 - level)/2, lower.tail=FALSE)
-    #z.mult = 2
     vsc = diag(acov)
     hl = z.mult*sqrt(vsc)
     lwr = etahat - hl
@@ -851,7 +827,7 @@ csvy.fit = function(design, family=stats::gaussian(), M=NULL, relaxes=NULL,
   lwru = etahatu - hlu
   uppu = etahatu + hlu
   
-  if (ne >= 1) {
+  if(ne >= 1){
     #etahatu = yvecu
     #new: if there's empty cells, just augment muhatu to include NA's
     etahatu_all = 1:(M+zeros)*0
@@ -871,25 +847,22 @@ csvy.fit = function(design, family=stats::gaussian(), M=NULL, relaxes=NULL,
     
     #for monotone only: to find the c.i. for empty/1 cells by using smallest L and largest U of neighbors
     #new: create grid2 again because the routines to do imputation need to have each x start from 1
-    xvs2 = apply(xm.red, 2, function(x) 1:length(unique(x)))
-    if(is.matrix(xvs2)){
-      grid2 = expand.grid(as.data.frame(xvs2))
-    }else if(is.list(xvs2)){
-      grid2 = expand.grid(xvs2)
-    }
+    #xvs2 = apply(xm.red, 2, function(x) 1:length(unique(x)))
+    xvs2 <- lapply(xm.red, function(x) sort(unique(x)))
+    grid2 = expand.grid(xvs2, KEEP.OUT.ATTRS = FALSE, stringsAsFactors = FALSE)
     #revise later: replace lwru with lwr etc
     ans_im = impute_em2(empty_cells, obs_cells, M=(M+zeros), etahatu, Nd, nd, Nhat, w, 
-                        domain.ord, grid2, Ds, sh, etahat, lwr=lwr, upp=upp, vsc=vsc, amat_0)
+                        domain.ord, grid2, Ds, sh, etahat, lwr=lwr, upp=upp, vsc=vsc, amat_0, level=level)
     etahat = ans_im$muhat
-    lwr = ans_im$lwr
-    upp = ans_im$upp
+    #lwr = ans_im$lwr
+    #upp = ans_im$upp
     vsc = ans_im$vsc
     domain.ord = ans_im$domain.ord
   }
   
-  sig1 = vsc
-  sig2 = sig1
-  vsc_mix = sig1
+  #sig1 = vsc
+  #sig2 = sig1
+  vsc_mix = vsc
   
   hl = z.mult*sqrt(vsc_mix)
   lwr = etahat - hl
@@ -898,9 +871,9 @@ csvy.fit = function(design, family=stats::gaussian(), M=NULL, relaxes=NULL,
   #new: learn from cgam; nasa's idea
   #for now, only handles one predictor
   #new: don't constrain endpoints to follow monotonicity; make a copy of old lwr and upp
-  lwr_0 = lwr
-  upp_0 = upp
-  nci = length(lwr)
+  # lwr_0 = lwr
+  # upp_0 = upp
+  # nci = length(lwr)
   
   #new: check monotonicity of lwr and upp
   sh_0 = sh
@@ -918,56 +891,43 @@ csvy.fit = function(design, family=stats::gaussian(), M=NULL, relaxes=NULL,
   
   #print (dim(amat_0))
   #print (length(lwr))
-  
   check_ps_lwr = round(c(amat_0 %*% lwr), 4) 
   check_ps_upp = round(c(amat_0 %*% upp), 4) 
-  
   not_monotone_ci = any(check_ps_lwr < 0) | any(check_ps_upp < 0)
-  
   #check more
   wvec = nd/sum(nd)
   if(any(wvec == 0)){
-    wvec[which(wvec == 0)] = 1e-4
+     #1e-12 fail to have the constraint
+     #need to be changed....
+     wvec[which(wvec == 0)] = pmin(1e-5, min(wvec[wvec > 0]))
+     #wvec[which(wvec == 0)] = 1e-4#1e-12#1e-4
   }
+  #wvec[wvec == 0] <- 1e-4  
   
   vsc_mix_0 = vsc_mix
-  if (length(sh_0) == 1 & n.mix > 0 & not_monotone_ci) {
-    #lwr = fix_monotone_1D(lwr, sh_0, nd)
-    #upp = fix_monotone_1D(upp, sh_0, nd)
-    #new:
-    #wvec1 = fix_monotone_coneA_1D(lwr, sh_0, nd)
-    #wvec2 = fix_monotone_coneA_1D(upp, sh_0, nd)
-    #print (wvec2)
-    lwr = coneA(lwr, amat_0, w = wvec)$thetahat
-    upp = coneA(upp, amat_0, w = wvec)$thetahat
-    vsc_mix_0 = ((upp - lwr) / 4)^2
-  }
+  # if (length(sh_0) == 1 & n.mix > 0 & not_monotone_ci) {
+  #   lwr = coneA(lwr, amat_0, w = wvec)$thetahat
+  #   upp = coneA(upp, amat_0, w = wvec)$thetahat
+  #   vsc_mix_0 = ((upp - lwr) / 4)^2
+  # }
   
   #new:
   check_ps_etahat = round(c(amat_0 %*% etahat), 4) 
-  if (length(sh_0) > 1 & n.mix > 0 & any(check_ps_etahat < 0) ) {
-    #wvec = fix_monotone_coneA_2D(amat_ci, amat = amat_0, ci = etahat, grid = grid2, Ds = Ds_0, nd, sh = sh_0, sh_all = sh, xvs2)
+  if (length(sh_0) > 1 & n.mix > 0 & any(check_ps_etahat < 0)) {
     etahat = coneA(etahat, amat_0, w = wvec)$thetahat
   }
   
-  if (length(sh_0) > 1 & n.mix > 0 & not_monotone_ci) {
-    #etahat = fix_monotone_2D(amat_ci, amat = amat_0, ci = etahat, grid = grid2, Ds = Ds_0, nd, sh = sh_0, sh_all = sh, xvs2)
-    #lwr = fix_monotone_2D(amat_ci, amat = amat_0, ci = lwr, grid = grid2, Ds = Ds_0, nd, sh = sh_0, sh_all = sh, xvs2)
-    #upp = fix_monotone_2D(amat_ci, amat = amat_0, ci = upp, grid = grid2, Ds = Ds_0, nd, sh = sh_0, sh_all = sh, xvs2)
-    #wvec1 = fix_monotone_coneA_2D(amat_ci, amat = amat_0, ci = lwr, grid = grid2, Ds = Ds_0, nd, sh = sh_0, sh_all = sh, xvs2)
-    #wvec2 = fix_monotone_coneA_2D(amat_ci, amat = amat_0, ci = upp, grid = grid2, Ds = Ds_0, nd, sh = sh_0, sh_all = sh, xvs2)
-    
+  #handles small domains automatically
+  if (length(sh_0) >= 1 & n.mix > 0 & not_monotone_ci) {
     lwr = coneA(lwr, amat_0, w = wvec)$thetahat
     upp = coneA(upp, amat_0, w = wvec)$thetahat
     #new:
-    vsc_mix_0 = ((upp - lwr) / 4)^2
+    #vsc_mix_0 = ((upp - lwr) / 4)^2
+    #new:
+    vsc_mix_0 = ((upp - lwr) / (2*z.mult))^2
   }
-  
-  # vscu = diag(v1)
-  # hlu = z.mult*sqrt(vscu)
-  # lwru = etahatu - hlu
-  # uppu = etahatu + hlu
-  
+  #new: should let vsc_mix = vsc_mix_0 
+  vsc_mix = vsc_mix_0 
   #new: test of H_0: theta in V and H_1: theta in C
   #do lsq fit with Atheta = 0 to get fit under H0
   #use the 1st option to compute T1 and T2
@@ -984,8 +944,9 @@ csvy.fit = function(design, family=stats::gaussian(), M=NULL, relaxes=NULL,
     eans = eigen(v1, symmetric=TRUE)
     evecs = eans$vectors; evecs = round(evecs, 8)
     #new: change negative eigenvalues to be a small positive value
-    evals = eans$values
-    sm = 1e-7
+    #evals = eans$values
+    evals = pmax(eans$values, 1e-12)
+    sm = 1e-8 #1e-7
     
     #need test more
     #neg_ps = which(evals < sm)
@@ -996,22 +957,33 @@ csvy.fit = function(design, family=stats::gaussian(), M=NULL, relaxes=NULL,
     Linv = solve(L) #solve will give singular error message when n is small
     atil = amat %*% L
     Z_s = Linv %*% yvecu
-    
     theta_hat = coneA(Z_s, atil, msg=FALSE)$thetahat
     T2_hat = t(Z_s-theta_hat) %*% (Z_s-theta_hat)
-    
     bval = (T1_hat-T2_hat)/T1_hat
-    
-    if (bval > sm) {
+    if(bval > sm){
       nloop = 100
       zerovec = rep(0, M)
       zsims = mvrnorm(nloop, mu = zerovec, Sigma = imat)
-      
-      J_length = rep(0, nloop)
-      for (i in 1:nloop) {
-        J_length[i] = length(coneA(zsims[i, ], atil, msg=FALSE)$face)
+      # J_length = rep(0, nloop)
+      # for (i in 1:nloop) {
+      #   J_length[i] = length(coneA(zsims[i, ], atil, msg=FALSE)$face)
+      # }
+      #J_length = parallel::mclapply(1:nloop, .compute_bstat, zsims=zsims, atil=atil) |> simplify2array()
+      if(use_parallel && cores > 1){
+        #message(sprintf("Running in parallel using %d cores.", cores))
+        if(is_windows){
+          # Windows: use parLapply with a PSOCK cluster
+          cl = parallel::makeCluster(cores)
+          on.exit(parallel::stopCluster(cl))  # ensure cleanup
+          J_length = parallel::parLapply(cl, 1:nloop, compute_bstat, zsims=zsims, atil=atil) |> simplify2array()
+        } else {
+          # Unix/macOS: use mclapply
+          J_length = parallel::mclapply(1:nloop, compute_bstat, zsims=zsims, atil=atil) |> simplify2array()
+        }
+      }else{
+        #message("Running in serial mode.")
+        J_length = lapply(1:nloop, compute_bstat, zsims=zsims, atil=atil) |> simplify2array()
       }
-      
       mdist = 0:m*0
       for (i in 1:(m+1)){
         mdist[i] = length(which(J_length == (i-1)))
@@ -1024,21 +996,60 @@ csvy.fit = function(design, family=stats::gaussian(), M=NULL, relaxes=NULL,
   h_grid = NULL
   muhat = c(family$linkinv(etahat))
   muhat.un = c(family$linkinv(etahatu))
-  muhat_all = 1:n*0
+  #used to compute deviance: every data point will be used, not just for domains 1,...,M
+  muhat_all = 1:n*0 #not include empty cells
   etahat_all = 1:n*0
   #new: for null deviance of gaussian case
   #ybar_all = 1:n*0
-  for (udi in uds){
-    udi = as.numeric(udi)
-    ps = which(ID %in% udi)
-    #should use muhat, not etahat
-    muhat_all[ps] = muhat[which(uds%in%udi)]
-    etahat_all[ps] = etahat[which(uds%in%udi)]
-    #ybar_all[ps] = ybar_vec[which(uds%in%udi)]
+  # for (udi in uds){
+  #   udi = as.numeric(udi)
+  #   ps = which(ID %in% udi)
+  #   #print (ps)
+  #   #should use muhat, not etahat
+  #   #print (muhat[which(uds%in%udi)])
+  #   print (which(uds%in%udi))
+  #   muhat_all[ps] = muhat[which(uds%in%udi)] #should not use which(uds%in%udi): won't skip empty cells?
+  #   etahat_all[ps] = etahat[which(uds%in%udi)]
+  #   #ybar_all[ps] = ybar_vec[which(uds%in%udi)]
+  # }
+  
+  #more correct: skip imputed empty cells
+  min_udi <- min(uds_num)
+  for(udi in uds_num){
+    ps <- which(ID %in% udi)
+    #print (ps)
+    idx <- udi - min_udi + 1
+    #print (muhat[idx])
+    #print (idx)
+    muhat_all[ps] <- muhat[idx]
+    etahat_all[ps] <- etahat[idx]
   }
-  #weights or prior.weights?
-  #prior.weights seems correct
-  deviance = sum(family$dev.resids(y, muhat_all, prior.weights))
+  
+  # if (family$family %in% c("binomial", "quasibinomial")){
+  #   wt <- prior.weights
+  #   # prevent log(0) issues by forcing y and mu into a safe range
+  #   eps <- .Machine$double.eps
+  #   muhat_all <- pmin(pmax(muhat_all, eps), 1 - eps)
+  #   #print (anyNA(wt))
+  #   #print (anyNA(y))
+  #   #print (anyNA(muhat_all))
+  #   #deviance <- 2*sum(wt*(y*log(y/muhat_all) + (1-y)*log((1-y)/(1-muhat_all))))
+  #   log_term1 <- ifelse(y == 0, 0, y * log(y / muhat_all))
+  #   log_term2 <- ifelse(y == 1, 0, (1 - y) * log((1 - y) / (1 - muhat_all)))
+  #   deviance <- 2 * sum(wt * (log_term1 + log_term2))
+  # }
+  # if (identical(family$family, "poisson")){
+  #   wt <- prior.weights
+  #   # Replace any y == 0 to avoid NaNs in log(y/mu)
+  #   deviance <- 2*sum(wt*ifelse(y == 0, -muhat_all, y*log(y / muhat_all) - (y - muhat_all)))
+  # }
+  # if(identical(family$family, "gaussian")){
+  #   wt <- prior.weights
+  #   deviance <- sum(wt*(y-muhat_all)^2)
+  # }
+  #cat('deviance by formula:', deviance, '\n')
+  deviance = sum(family$dev.resids(y, muhat_all, wt = prior.weights))
+  #cat('deviance by dev.resids:', sum(family$dev.resids(y, muhat_all, wt = prior.weights)), '\n')  
   #CIC = t(evec) %*% wt %*% evec + 2*(sum(diag(mat)))
   #same as CIC:
   #for gaussian: -2loglike = nlog(t(evec) %*% wt %*% evec)
@@ -1050,13 +1061,16 @@ csvy.fit = function(design, family=stats::gaussian(), M=NULL, relaxes=NULL,
   ans$linear.predictors = etahat_all
   ans$etahat = c(etahat)
   ans$linear.predictors.un = ans.unc$linear.predictors
-  ans$etahatu = c(yvecu)
+  #ans$etahatu = c(yvecu)
+  ans$etahatu = etahatu #include NA's for zero cells
   ans$fitted.values = muhat_all
   ans$muhat = muhat
   ans$fitted.values.un = ans.unc$fitted.values
   ans$muhatu = muhat.un
   ans$cov.un = v1 #unconstrained cov
-  ans$cov.unscaled = vsc_mix #constrained cov with imputation
+  #ans$cov.unscaled = vsc_mix #constrained cov with imputation, if fixed with monotonicity, then change it to be vsc_mix_0 
+  ans$vsc_mix = vsc_mix #constrained cov with imputation, if fixed with monotonicity, then change it to be vsc_mix_0 
+  ans$n.mix = n.mix
   if(n.mix == 0L){
     ans$acov = v1
   } else {
@@ -1073,12 +1087,16 @@ csvy.fit = function(design, family=stats::gaussian(), M=NULL, relaxes=NULL,
   ans$df.null = M - 1
   ans$deviance = deviance
   #ans$df.residual = n - edf
-  ans$df.residual = M - edf
-  ans$edf = edf 
+  ans$df.residual = length(facekeep) #resid df obs #M - edf
+  ans$edf = edf #constr df, obs
   ans$lwr = c(lwr)
+  #ans$lwr = c(family$linkinv(lwr))
   ans$upp = c(upp)
+  #ans$upp = c(family$linkinv(upp))
   ans$lwru = c(lwru)
+  #ans$lwru = c(family$linkinv(lwru))
   ans$uppu = c(uppu)
+  #ans$uppu = c(family$linkinv(uppu))
   ans$y = y
   ID = as.numeric(levels(ID))[ID] 
   ans$domain = ID
@@ -1088,6 +1106,7 @@ csvy.fit = function(design, family=stats::gaussian(), M=NULL, relaxes=NULL,
   ans$domain.ord = domain.ord
   ans$nd = nd
   ans$grid = grid2
+  ans$xvs2 = xvs2
   ans$ec = empty_cells
   ans$hkeep = hkeep
   ans$h_grid = h_grid
@@ -1097,15 +1116,15 @@ csvy.fit = function(design, family=stats::gaussian(), M=NULL, relaxes=NULL,
   ans$CIC = CIC
   ans$CIC.un = CIC.un
   ans$logLike_CIC = logLike_CIC
-  #new: inherit attributes if svyby is used
+  #new: inherit attributes if svyby is used; put constrained fits in it
   if (family$family == "gaussian") {
     ans.unc_cp = data.frame(matrix(nrow = M_0, ncol = ncol(ans.unc)))
     colnames(ans.unc_cp) = colnames(ans.unc)
-    #ans.unc_cp$ID = factor(1:M_0)
+    ans.unc_cp$ID = factor(1:M_0)
     #ans.unc_cp = ans.unc_cp_0
     ans.unc_cp[[ynm]] = as.numeric(etahat)
-    #ans.unc_cp$se = vsc_mix^(.5)
-    ans.unc_cp$se = vsc_mix_0^(.5) #new
+    ans.unc_cp$se = vsc_mix^(.5) #updated if vsc_mix_0 is used to fix monotonicity
+    #ans.unc_cp$se = vsc_mix_0^(.5) #new
     attr(ans.unc_cp, "class") = c("svyby", "data.frame")
     attr(ans.unc_cp, "svyby") = attr(ans.unc, "svyby")
     attr(ans.unc_cp, "var") = acov
@@ -1114,17 +1133,18 @@ csvy.fit = function(design, family=stats::gaussian(), M=NULL, relaxes=NULL,
     colnames(ans.unc_cp) = colnames(ans.unc_cp_0)
     ans.unc_cp = ans.unc_cp_0
     ans.unc_cp[[ynm]] = as.numeric(etahat)
-    #ans.unc_cp$se = vsc_mix^(.5)
-    ans.unc_cp$se = vsc_mix_0^(.5) #new
+    ans.unc_cp$se = vsc_mix^(.5)
+    #ans.unc_cp$se = vsc_mix_0^(.5) #new
     attr(ans.unc_cp, "class") = c("svyby", "data.frame")
     attr(ans.unc_cp, "svyby") = attr(ans.unc_cp_0, "svyby")
     attr(ans.unc_cp, "var") = acov
   }
+  ans$M = M
   ans$w = w
   ans$xm.red = xm.red
   ans$ne = ne
   ans$empty_cells = empty_cells
-  ans$small_cells = small_cells
+  #ans$small_cells = small_cells
   ans$obs_cells = obs_cells
   ans$zeros = zeros
   ans$Nd = Nd
@@ -1138,8 +1158,10 @@ csvy.fit = function(design, family=stats::gaussian(), M=NULL, relaxes=NULL,
   ans$ans.unc_cp = ans.unc_cp
   ans$offset = ans.unc$offset
   ans$contrasts = ans.unc$contrasts
+  ans$n.mix = n.mix
   return (ans)
 }
+
 
 ####################################
 #inherit from cgam
@@ -1150,214 +1172,458 @@ csvy.fit = function(design, family=stats::gaussian(), M=NULL, relaxes=NULL,
 # #x2nm = deparse(substitute(x2))
 #  UseMethod("plotpersp", object)
 # }
+get_varname <- function(expr) {
+  if (is.call(expr)) {
+    # Recursive extraction of the first symbol in a call
+    return(get_varname(expr[[2]]))
+  }
+  if (is.name(expr)) {
+    return(as.character(expr))
+  }
+  stop("Unsupported expression for variable name extraction.")
+}
+
+# get_complete_design <- function(formula, design) {
+#   mf <- model.frame(formula, data = design$variables, na.action = na.omit)
+#   rows_kept <- rownames(mf)
+#   design_new <- subset(design, rownames(design$variables) %in% rows_kept)
+#   list(model_frame = mf, design = design_new)
+# }
+
+get_complete_design <- function(formula, design) {
+  #test!
+  if(!is.null(design$variables)){
+    dat <- design$variables
+  } else if(!is.null(design$call$data)){
+    dat <- design$call$data
+  } else {
+    stop("no idea about how to access variables in the design!")
+  }
+  mf <- model.frame(formula, data = dat, na.action = na.omit)
+  rows_kept <- rownames(mf)
+  design_new <- subset(design, rownames(dat) %in% rows_kept)
+  list(model_frame = mf, design = design_new)
+}
+
+get_design_variables <- function(design) {
+  if (!is.null(design$variables)) {
+    return(design$variables)
+  } else if (!is.null(design$call$data)) {
+    dat <- try(eval(design$call$data, envir = parent.frame()), silent = TRUE)
+    if (!inherits(dat, "try-error")) return(dat)
+  }
+  mf <- tryCatch(model.frame(design), error = function(e) NULL)
+  return(mf)
+}
+
+safe_svyby <- function(formula, by, design, family = c("gaussian", "binomial"),
+                       FUN = svymean,
+                       drop.empty.groups = FALSE,
+                       vartype = "se", keep.var = TRUE, keep.names = TRUE,
+                       verbose = FALSE, na.rm.by = FALSE, na.rm.all = FALSE, ...) {
+  family <- match.arg(family)
+  
+  if (family == "gaussian") {
+    tryCatch({
+      svyby(formula = formula, by = by, design = design, FUN = FUN,
+            covmat = TRUE, drop.empty.groups = drop.empty.groups, ...)
+    }, error = function(e) {
+      warning("svyby() failed with covmat = TRUE: ", conditionMessage(e),
+              ". Falling back to covmat = FALSE.")
+      svyby(formula = formula, by = by, design = design, FUN = FUN,
+            covmat = FALSE, drop.empty.groups = drop.empty.groups, ...)
+    })
+  } else if (family == "binomial") {
+    tryCatch({
+      suppressWarnings(
+        svyby(formula = formula, by = by, design = design, FUN = svymean,
+              keep.var = keep.var, keep.names = keep.names, verbose = verbose,
+              vartype = vartype, drop.empty.groups = drop.empty.groups,
+              covmat = TRUE, na.rm.by = na.rm.by, na.rm.all = na.rm.all, ...)
+      )
+    }, error = function(e) {
+      warning("svyby() failed with covmat = TRUE: ", conditionMessage(e),
+              ". Falling back to covmat = FALSE.")
+      suppressWarnings(
+        svyby(formula = formula, by = by, design = design, FUN = svymean,
+              keep.var = keep.var, keep.names = keep.names, verbose = verbose,
+              vartype = vartype, drop.empty.groups = drop.empty.groups,
+              covmat = FALSE, na.rm.by = na.rm.by, na.rm.all = na.rm.all, ...)
+      )
+    })
+  }
+}
+
+
+match_rows <- function(xm, grid2) {
+  stopifnot(is.data.frame(xm), is.data.frame(grid2))
+  # Load data.table only inside function
+  if (!requireNamespace("data.table", quietly = TRUE)) {
+    stop("The 'data.table' package is required. Please install it with install.packages('data.table')")
+  }
+  # Convert to data.table
+  dt_xm <- as.data.table(xm)
+  dt_grid <- as.data.table(grid2)
+  # Ensure column names match and are in the same order
+  common_vars <- intersect(names(dt_xm), names(dt_grid))
+  dt_xm <- dt_xm[, ..common_vars]
+  dt_grid <- dt_grid[, ..common_vars]
+  # Add row index to grid
+  dt_grid[, grid_id := .I]
+  # Set key for fast join
+  data.table::setkeyv(dt_grid, common_vars)
+  # Join and return index
+  match_ids <- dt_grid[dt_xm, on = common_vars]$grid_id
+  return(match_ids)
+}
+
+compute_mixture <- function(iloop, ysims, amat, w)
+{
+  ysim <- ysims[iloop, ]
+  anssim <- coneA(ysim, amat, w=w, msg=FALSE)
+  face <-  anssim$face
+  sec <- 1:nrow(amat)*0
+  if (length(face) > 0){
+    sec[face] <- 1
+  } 
+  rslt <- sec
+  return (rslt)
+}
+
+compute_bstat <- function(iloop, zsims, atil){
+  zsim <- zsims[iloop, ]
+  anssim <- coneA(zsim, atil, msg=FALSE)
+  face <- anssim$face
+  rslt <- length(face)
+  return (rslt)
+}
 
 #--------------------------------------------------
 #ci can be ci or upp
 #need to include block ordering
+#not used anymore
 #--------------------------------------------------
-fix_monotone_1D = function(ci, sh, nd,...){
-  check_ps_ci = round(diff(ci), 6)
-  bool_ci1 = any(check_ps_ci < 0) & sh == 1
-  bool_ci2 = any(check_ps_ci > 0) & sh == 2
-  not_monotone_ci = ifelse(bool_ci1 | bool_ci2, TRUE, FALSE)
-  nci = length(ci)
+# fix_monotone_1D = function(ci, sh, nd,...){
+#   check_ps_ci = round(diff(ci), 6)
+#   bool_ci1 = any(check_ps_ci < 0) & sh == 1
+#   bool_ci2 = any(check_ps_ci > 0) & sh == 2
+#   not_monotone_ci = ifelse(bool_ci1 | bool_ci2, TRUE, FALSE)
+#   nci = length(ci)
+#   
+#   nrep = 0
+#   while(not_monotone_ci & nrep < 20) {
+#     nrep = nrep + 1
+#     if (sh == 1) {
+#       check_id_ci = which(check_ps_ci < 0)
+#       n_check_ci = length(check_id_ci)
+#       for(k in 1:n_check_ci){
+#         i = check_id_ci[k]
+#         if (any(which(ci[(i + 1):nci] < ci[i]))){
+#           ps_left = i
+#           check_ps = which(ci[(i + 1):nci] < ci[i])
+#           ps_right = max(((i+1):nci)[check_ps])
+#           nd_lr = nd[ps_left:ps_right]
+#           if (any(nd_lr > 0)){
+#             ws = nd_lr / sum(nd_lr)
+#             ci[ps_left:ps_right] = sum(ws * ci[ps_left:ps_right])
+#           }   
+#         }
+#       }
+#     }
+#     
+#     if (sh == 2){
+#       check_id_ci = which(check_ps_ci > 0)
+#       n_check_ci = length(check_id_ci)
+#       for(k in n_check_ci:1){
+#         #the domain that violates the constraint is the ith domain
+#         i = check_id_ci[k]
+#         if (any(which(ci[1:i] < ci[i + 1]))){
+#           check_ps = which(ci[1:i] < ci[i + 1])
+#           ps_left = min((1:i)[check_ps])
+#           ps_right = i + 1
+#           nd_lr = nd[ps_left:ps_right]
+#           if (any(nd_lr > 0)){
+#             ws = nd_lr / sum(nd_lr)
+#             ci[ps_left:ps_right] = sum(ws * ci[ps_left:ps_right])
+#           }       
+#         }
+#       }
+#     }
+#     
+#     check_ps_ci = round(diff(ci), 6)
+#     bool_ci1 = any(check_ps_ci < 0) & sh == 1
+#     bool_ci2 = any(check_ps_ci > 0) & sh == 2
+#     not_monotone_ci = ifelse(bool_ci1 | bool_ci2, TRUE, FALSE)
+#   }
+#   return (ci)
+# }
+
+#--------------------------------------------------
+# fix_monotone_2D = function(amat_ci, amat, ci, grid, Ds, nd, sh, sh_all, xvs2,...){
+#   if(all(sh == 1)) {
+#     ci = fix_monotone_2D_0(amat, ci, grid, Ds, nd)$ci
+#   }
+#   if(all(sh == 2)){
+#     ci = fix_monotone_2D_0(-amat, -ci, grid, Ds, nd)$ci
+#     ci = -ci
+#   }
+#   if(any(sh == 1) & any(sh == 2)){
+#     nD = length(Ds)
+#     decr_ps = which(sh_all == 2) #sh_all include sh = 0, xvs2 include sh = 0
+#     
+#     xvs2_0 = xvs2
+#     for(i in decr_ps){
+#       if(is.matrix(xvs2_0)){
+#         xvs2_0[,i] = rev(xvs2_0[,i])
+#       }else if(is.list(xvs2_0)){
+#         xvs2_0[[i]] = rev(xvs2[[i]])
+#       }
+#     }
+#     
+#     if(is.matrix(xvs2_0)){
+#       grid_rev = expand.grid(as.data.frame(xvs2_0))
+#     }else if(is.list(xvs2_0)){
+#       grid_rev = expand.grid(xvs2_0)
+#     }
+#     
+#     ps_rev = apply(grid_rev, 1, function(elem) which(apply(grid, 1, function(gi) all(gi == elem))))
+#     ci_rev = ci[ps_rev]
+#     
+#     amat_rev = amat
+#     sh_track = NULL
+#     for(i in 1:nD){
+#       amati = amat_ci[[i]]
+#       shi = sh[i]
+#       sh_track = c(sh_track, rep(shi, nrow(amati)))
+#     }
+#     amat_rev[which(sh_track == 2), ] = -amat[which(sh_track == 2), , drop = FALSE]
+#     
+#     nd_rev = nd[ps_rev]
+#     Ds_rev = Ds #?
+#     ci_rev = fix_monotone_2D_0(amat_rev, ci_rev, grid_rev, Ds, nd_rev)$ci
+#     ci = ci_rev[ps_rev]
+#   }
+#   return (ci)
+# }
+
+#--------------------------------------------------
+# fix_monotone_2D_0 = function(amat, ci, grid, Ds, nd,...){
+#   sm = 1e-5
+#   check_ps_ci = round(c(amat %*% ci), 5) #4th or 5th digit?
+#   not_monotone_ci = any(check_ps_ci < 0)
+#   nrep = 0
+#   upp_limit = 1000 # should be 2^D1 * 2^D2?
+#   clusters_merged = list()
+#   
+#   while(not_monotone_ci & nrep < upp_limit){
+#     nrep = nrep + 1
+#     check_id_ci = which(check_ps_ci < 0)
+#     amat_not_mono = amat[check_id_ci, ,drop = FALSE]
+#     grid_ci = cbind(grid, ci, t(amat_not_mono)) #no use, for visual check only
+#     #different from 1D case
+#     ps_left_cands = which(apply(amat_not_mono, 2, function(e) any(-1 %in% e)))
+#     ps_left_cands = sort(ps_left_cands)
+#     n_lefts = length(ps_left_cands)
+#     
+#     rows_lefts = NULL
+#     clusters = vector('list', length = n_lefts) #each cluster will be weight-averaged
+#     for(k in 1:n_lefts){
+#       ps_left_k = ps_left_cands[k]
+#       colk = amat_not_mono[, ps_left_k, drop = TRUE]
+#       row_ps = which(colk == -1)
+#       rows_lefts = c(rows_lefts, row_ps)
+#       rowk = amat_not_mono[row_ps, ,drop = FALSE] #need to move along rowk to find 1
+#       ps_right_k = apply(rowk, 1, function(es) max(which(es == 1)))
+#       clusters[[k]] = c(ps_left_k, ps_right_k)
+#     }
+#     
+#     #make a copy
+#     clusters_0 = clusters
+#     #merge elements in clusters which have common domains
+#     #clusters_merged = list()
+#     iter = 1
+#     nc = length(clusters)
+#     
+#     #----------------------------------------------------------------------------------------------------
+#     #found here: https://stackoverflow.com/questions/47322126/merging-list-with-common-elements
+#     #----------------------------------------------------------------------------------------------------
+#     i = rep(1:length(clusters_0), lengths(clusters_0))
+#     j = factor(unlist(clusters_0))
+#     tab = sparseMatrix(i = i, j = as.integer(j), x = TRUE, dimnames = list(NULL, levels(j)))
+#     connects = Matrix::tcrossprod(tab, boolArith = TRUE)
+#     group = clusters(graph_from_adjacency_matrix(connects, mode = "undirected"))$membership
+#     clusters_merged = tapply(clusters_0, group, function(x) sort(unique(unlist(x))))
+#     
+#     nc_merged = length(clusters_merged)
+#     for(k in 1:nc_merged){
+#       ps_lr = clusters_merged[[k]]
+#       #print (ps_lr)
+#       nd_lr = nd[ps_lr]
+#       #print (nd_lr)
+#       if (any(nd_lr > 0)){
+#         ws = nd_lr / sum(nd_lr)
+#         ci[ps_lr] = sum(ws * ci[ps_lr])
+#         #temp
+#         if(any(nd_lr == 0)){
+#           nd_lr[which(nd_lr == 0)] = round(mean(nd_lr[which(nd_lr != 0)]))
+#           nd[ps_lr] = nd_lr
+#         }
+#       }   
+#       
+#       #temp: difficult case, the merged cluster consists of zero cells only
+#       if(all(nd_lr == 0)){
+#         ci_left_most = ci[ps_lr[1]]
+#         ci[ps_lr] = ci_left_most
+#       }
+#     }
+#     check_ps_ci = round(c(amat %*% ci), 5)
+#     not_monotone_ci = any(check_ps_ci < 0)
+#   }
+#   #print (nrep)
+#   #rslt = list(ci = ci, nrep = nrep, clusters_merged = clusters_merged)
+#   rslt = list(ci = ci, nrep = nrep)
+#   return (rslt)
+# }
+
+###################################################
+#marginal plot function with some helper functions
+###################################################
+capitalize_first <- function(x) {
+  paste0(toupper(substr(x, 1, 1)), tolower(substr(x, 2, nchar(x))))
+}
+
+recode_ordered_factor_to_numeric <- function(x, levels_wanted) {
+  # Drop unused levels and coerce to ordered factor
+  x <- factor(x, levels = levels_wanted, ordered = TRUE)
+  # Replace with integer codes (1, 2, 3, ...)
+  as.numeric(x)
+}
+
+reorder_outputs <- function(object, x1nm, x2nm, x3nm = NULL, grid=NULL, keep_id=NULL, 
+                            is_constrained = TRUE, ci = TRUE, type=c("constrained", "unconstrained", "both")) {
+  #linkinv <- object$family$linkinv
+  linkinv <- family(object)$linkinv
+  grid_old <- grid %||% object$grid
+  ps <- keep_id %||% 1:NROW(object$grid)
+  xvs2 <- object$xvs2
+  nxvs <- length(xvs2)
+  xnms_add <- object$xnms_add
+  other_xnms <- setdiff(xnms_add, c(x1nm, x2nm))
   
-  nrep = 0
-  while(not_monotone_ci & nrep < 20) {
-    nrep = nrep + 1
-    if (sh == 1) {
-      check_id_ci = which(check_ps_ci < 0)
-      n_check_ci = length(check_id_ci)
-      for(k in 1:n_check_ci){
-        i = check_id_ci[k]
-        if (any(which(ci[(i + 1):nci] < ci[i]))){
-          ps_left = i
-          check_ps = which(ci[(i + 1):nci] < ci[i])
-          ps_right = max(((i+1):nci)[check_ps])
-          nd_lr = nd[ps_left:ps_right]
-          if (any(nd_lr > 0)){
-            ws = nd_lr / sum(nd_lr)
-            ci[ps_left:ps_right] = sum(ws * ci[ps_left:ps_right])
-          }   
-        }
-      }
-    }
-    
-    if (sh == 2){
-      check_id_ci = which(check_ps_ci > 0)
-      n_check_ci = length(check_id_ci)
-      for(k in n_check_ci:1){
-        #the domain that violates the constraint is the ith domain
-        i = check_id_ci[k]
-        if (any(which(ci[1:i] < ci[i + 1]))){
-          check_ps = which(ci[1:i] < ci[i + 1])
-          ps_left = min((1:i)[check_ps])
-          ps_right = i + 1
-          nd_lr = nd[ps_left:ps_right]
-          if (any(nd_lr > 0)){
-            ws = nd_lr / sum(nd_lr)
-            ci[ps_left:ps_right] = sum(ws * ci[ps_left:ps_right])
-          }       
-        }
-      }
-    }
-    
-    check_ps_ci = round(diff(ci), 6)
-    bool_ci1 = any(check_ps_ci < 0) & sh == 1
-    bool_ci2 = any(check_ps_ci > 0) & sh == 2
-    not_monotone_ci = ifelse(bool_ci1 | bool_ci2, TRUE, FALSE)
-  }
-  return (ci)
-}
-
-#--------------------------------------------------
-fix_monotone_2D = function(amat_ci, amat, ci, grid, Ds, nd, sh, sh_all, xvs2,...){
-  if(all(sh == 1)) {
-    ci = fix_monotone_2D_0(amat, ci, grid, Ds, nd)$ci
-  }
-  if(all(sh == 2)){
-    ci = fix_monotone_2D_0(-amat, -ci, grid, Ds, nd)$ci
-    ci = -ci
-  }
-  if(any(sh == 1) & any(sh == 2)){
-    nD = length(Ds)
-    decr_ps = which(sh_all == 2) #sh_all include sh = 0, xvs2 include sh = 0
-    
-    xvs2_0 = xvs2
-    for(i in decr_ps){
-      if(is.matrix(xvs2_0)){
-        xvs2_0[,i] = rev(xvs2_0[,i])
-      }else if(is.list(xvs2_0)){
-        xvs2_0[[i]] = rev(xvs2[[i]])
-      }
-    }
-    
-    if(is.matrix(xvs2_0)){
-      grid_rev = expand.grid(as.data.frame(xvs2_0))
-    }else if(is.list(xvs2_0)){
-      grid_rev = expand.grid(xvs2_0)
-    }
-    
-    ps_rev = apply(grid_rev, 1, function(elem) which(apply(grid, 1, function(gi) all(gi == elem))))
-    ci_rev = ci[ps_rev]
-    
-    amat_rev = amat
-    sh_track = NULL
-    for(i in 1:nD){
-      amati = amat_ci[[i]]
-      shi = sh[i]
-      sh_track = c(sh_track, rep(shi, nrow(amati)))
-    }
-    amat_rev[which(sh_track == 2), ] = -amat[which(sh_track == 2), , drop = FALSE]
-    
-    nd_rev = nd[ps_rev]
-    Ds_rev = Ds #?
-    ci_rev = fix_monotone_2D_0(amat_rev, ci_rev, grid_rev, Ds, nd_rev)$ci
-    ci = ci_rev[ps_rev]
-  }
-  return (ci)
-}
-
-#--------------------------------------------------
-fix_monotone_2D_0 = function(amat, ci, grid, Ds, nd,...){
-  sm = 1e-5
-  check_ps_ci = round(c(amat %*% ci), 5) #4th or 5th digit?
-  not_monotone_ci = any(check_ps_ci < 0)
-  nrep = 0
-  upp_limit = 1000 # should be 2^D1 * 2^D2?
-  clusters_merged = list()
+  if(nxvs == 2){
+    grid_new <- expand.grid(xvs2[[x1nm]], xvs2[[x2nm]])
+    colnames(grid_new) <- c(x1nm, x2nm)
+  } else if (nxvs >= 3){
+    grid_new <- expand.grid(xvs2[[x3nm]], xvs2[[x1nm]], xvs2[[x2nm]])
+    colnames(grid_new) <- c(x3nm, x1nm, x2nm)
+  } 
   
-  while(not_monotone_ci & nrep < upp_limit){
-    nrep = nrep + 1
-    check_id_ci = which(check_ps_ci < 0)
-    amat_not_mono = amat[check_id_ci, ,drop = FALSE]
-    grid_ci = cbind(grid, ci, t(amat_not_mono)) #no use, for visual check only
-    #different from 1D case
-    ps_left_cands = which(apply(amat_not_mono, 2, function(e) any(-1 %in% e)))
-    ps_left_cands = sort(ps_left_cands)
-    n_lefts = length(ps_left_cands)
-    
-    rows_lefts = NULL
-    clusters = vector('list', length = n_lefts) #each cluster will be weight-averaged
-    for(k in 1:n_lefts){
-      ps_left_k = ps_left_cands[k]
-      colk = amat_not_mono[, ps_left_k, drop = TRUE]
-      row_ps = which(colk == -1)
-      rows_lefts = c(rows_lefts, row_ps)
-      rowk = amat_not_mono[row_ps, ,drop = FALSE] #need to move along rowk to find 1
-      ps_right_k = apply(rowk, 1, function(es) max(which(es == 1)))
-      clusters[[k]] = c(ps_left_k, ps_right_k)
-    }
-    
-    #make a copy
-    clusters_0 = clusters
-    #merge elements in clusters which have common domains
-    #clusters_merged = list()
-    iter = 1
-    nc = length(clusters)
-    
-    #----------------------------------------------------------------------------------------------------
-    #found here: https://stackoverflow.com/questions/47322126/merging-list-with-common-elements
-    #----------------------------------------------------------------------------------------------------
-    i = rep(1:length(clusters_0), lengths(clusters_0))
-    j = factor(unlist(clusters_0))
-    tab = sparseMatrix(i = i, j = as.integer(j), x = TRUE, dimnames = list(NULL, levels(j)))
-    connects = Matrix::tcrossprod(tab, boolArith = TRUE)
-    group = clusters(graph_from_adjacency_matrix(connects, mode = "undirected"))$membership
-    clusters_merged = tapply(clusters_0, group, function(x) sort(unique(unlist(x))))
-    
-    nc_merged = length(clusters_merged)
-    for(k in 1:nc_merged){
-      ps_lr = clusters_merged[[k]]
-      #print (ps_lr)
-      nd_lr = nd[ps_lr]
-      #print (nd_lr)
-      if (any(nd_lr > 0)){
-        ws = nd_lr / sum(nd_lr)
-        ci[ps_lr] = sum(ws * ci[ps_lr])
-        #temp
-        if(any(nd_lr == 0)){
-          nd_lr[which(nd_lr == 0)] = round(mean(nd_lr[which(nd_lr != 0)]))
-          nd[ps_lr] = nd_lr
-        }
-      }   
-      
-      #temp: difficult case, the merged cluster consists of zero cells only
-      if(all(nd_lr == 0)){
-        ci_left_most = ci[ps_lr[1]]
-        ci[ps_lr] = ci_left_most
-      }
-    }
-    check_ps_ci = round(c(amat %*% ci), 5)
-    not_monotone_ci = any(check_ps_ci < 0)
+  index <- match(
+    apply(grid_new, 1, paste, collapse = "_"),
+    apply(grid_old[, colnames(grid_new)], 1, paste, collapse = "_")
+  )
+  
+  type = match.arg(type)
+  if(is.null(object$lwr) || !ci){#use lwru if n.mix=0
+  #if(object$n.mix == 0){
+    lwr = NA_real_
+  } else {
+    lwr = linkinv(if (is_constrained) object$lwr[ps] else object$lwru[ps])[index]
   }
-  #print (nrep)
-  #rslt = list(ci = ci, nrep = nrep, clusters_merged = clusters_merged)
-  rslt = list(ci = ci, nrep = nrep)
-  return (rslt)
+  
+  if(is.null(object$upp) || !ci){
+  #if(object$n.mix == 0){
+    upp = NA_real_
+  } else {
+    upp = linkinv(if (is_constrained) object$upp[ps] else object$uppu[ps])[index]
+  }
+  
+  list(
+    grid = grid_new,
+    muhat = linkinv(if (is_constrained) object$etahat[ps] else object$etahatu[ps])[index],
+    lwr = lwr, 
+    upp = upp
+    #lwr =  linkinv(if (is_constrained) object$lwr[ps]    else object$lwru[ps])[index],
+    #upp =  linkinv(if (is_constrained) object$upp[ps]    else object$uppu[ps])[index]
+  )
 }
-
-
 
 #########################################
 #new plotpersp
+#with a control function
 #########################################
-plotpersp.csvy = function(object, x1=NULL, x2=NULL, x1nm=NULL, x2nm=NULL, data=NULL, ci=c("none", "lwr", "up", "both"),
-                          transpose=FALSE, main=NULL, categ=NULL, categnm=NULL, 
-                          surface = c("C","U"), type = c("link", "response"),
-                          col = "white", cex.main=.8, xlab=NULL, 
-                          ylab=NULL, zlab=NULL, zlim=NULL, box=TRUE,
-                          axes=TRUE, th=NULL, ltheta=NULL, 
-                          ticktype="detailed", nticks=5, palette=NULL, NCOL=NULL,...) {
-  x1nm = deparse(substitute(x1))
-  x2nm = deparse(substitute(x2))
-  type = match.arg(type)
-  surface = match.arg(surface)
-  ci = match.arg(ci)
-  #print (ci)
+plotpersp_csvy_control <- function(surface = c("C", "U"), x1nm = NULL, x2nm = NULL, categ = NULL,
+                                   col = NULL, random = FALSE, ngrid = 12,
+                                   xlim = NULL, ylim = NULL, zlim = NULL,
+                                   xlab = NULL, ylab = NULL, zlab = NULL,
+                                   th = NULL, ltheta = NULL, main = NULL,
+                                   sub = NULL, ticktype = "simple",
+                                   # New csvy-specific controls:
+                                   ci = c("none", "lwr", "up", "both"), 
+                                   cex = 1, categnm = NULL, type = c("response", "link"),
+                                   cex.main = 0.8, box = TRUE, axes = TRUE,
+                                   nticks = 5, palette = NULL, NCOL = NULL, transpose = FALSE) {
+  # Step 1: Base control list from plotpersp_control()
+  base_control <- cgam::plotpersp_control()
+  # Step 2: Add extra csvy-specific fields
+  csvy_control <- list(surface = match.arg(surface), ci = match.arg(ci), cex = cex, categnm = categnm, type = match.arg(type), 
+                       cex.main = cex.main, box = box, axes = axes, nticks = nticks, palette = palette, NCOL=NCOL, transpose=transpose)
+  # Step 3: Merge base and extra
+  lst <- modifyList(base_control, csvy_control)
+  return (lst)
+}
+
+#plotpersp.csvy = function(object, x1=NULL, x2=NULL, x1nm = NULL, x2nm = NULL, data = NULL, 
+#                          ci = c("none", "lwr", "up", "both"),
+#                          transpose = FALSE, main = NULL, categ = NULL, categnm = NULL, surface = c("C", "U"),
+#                          type = c("link", "response"), col = "white", cex.main = 0.8, xlab = NULL, ylab = NULL,
+#                          zlab = NULL, zlim = NULL, box = TRUE, axes = TRUE, th = NULL, ltheta = NULL, 
+#                          ticktype = "detailed",
+#                          nticks = 5, palette = NULL, NCOL = NULL,...) {
+plotpersp.csvy = function(object, x1 = NULL, x2 = NULL, control = plotpersp_csvy_control(),...) {
   if (!inherits(object, "csvy")) {
     warning("calling plotpersp(<fake-csvy-object>) ...")
   }
+  defaults <- plotpersp_csvy_control()
+  control <- modifyList(defaults, control)
+  x1nm   <- control$x1nm
+  x2nm   <- control$x2nm
+  surface <- control$surface
+  categ  <- control$categ
+  col    <- control$col
+  random <- control$random
+  ngrid  <- control$ngrid
+  xlim   <- control$xlim
+  ylim   <- control$ylim
+  zlim   <- control$zlim
+  xlab   <- control$xlab
+  ylab   <- control$ylab
+  zlab   <- control$zlab
+  th     <- control$th
+  ltheta <- control$ltheta
+  main   <- control$main
+  ticktype <- control$ticktype
+  sub <- control$sub
+
+  ci <- control$ci
+  cex <- control$cex
+  categnm <- control$categnm
+  type <- control$type
+  cex.main <- control$cex.main
+  box <- control$box
+  axes <- control$axes
+  nticks <- control$nticks
+  palette <- control$palette
+  NCOL <- control$NCOL
+  transpose <- control$transpose
+
+  x1nm <- x1nm %||% if (!is.null(x1)) { 
+    if (is.character(x1)) x1 else deparse(substitute(x1)) 
+  }
+  x2nm <- x2nm %||% if (!is.null(x2)) { 
+    if (is.character(x2)) x2 else deparse(substitute(x2)) 
+  }
+  
   xnms = object$xnms_add
   shp = object$shapes_add
   Ds = object$Ds
@@ -1373,6 +1639,7 @@ plotpersp.csvy = function(object, x1=NULL, x2=NULL, x1nm=NULL, x2nm=NULL, data=N
   lwr = object$lwr
   upp = object$upp
   grid = object$grid
+  data = object$data
   main = ifelse(is.null(main), "Constrained Fit", main)
   
   switch(surface, U = {
@@ -1706,9 +1973,9 @@ plotpersp.csvy = function(object, x1=NULL, x2=NULL, x1nm=NULL, x2nm=NULL, data=N
     par(new=FALSE)
     on.exit(par(old.par))
   }
-  #rslt = list(surf.etahat = surf.etahat, surf.upp = surf.upp, surf.lwr = surf.lwr, zlim = zlim0, xlab = xlab, ylab = ylab, zlab = zlab, theta = ang, 
-  #            ltheta = ltheta, col = col, cex.axis = .75, main = main, ticktype = ticktype)
-  #invisible(rslt)
+  rslt = list(surf.etahat = surf.etahat, surf.upp = surf.upp, surf.lwr = surf.lwr, zlim = zlim0, xlab = xlab, ylab = ylab, zlab = zlab, theta = ang, 
+              ltheta = ltheta, col = col, cex.axis = .75, main = main, ticktype = ticktype)
+  invisible(rslt)
 }
 
 #########################################
@@ -1918,11 +2185,47 @@ getbin = function(num, capl) {
 #   x
 # }
 
+# incr <- function (x, numknots = 0, knots = 0, space = "E") 
+# {
+#   cl <- match.call()
+#   pars <- match.call()[-1]
+#   #attr(x, "nm") <- deparse(pars$x)
+#   attr(x, "nm") <- get_varname(pars$x)
+#   #attr(x, "nm") <- all.vars(pars$x)[1]
+#   #attr(x, "nm") <- rlang::as_name(pars$x)
+#   attr(x, "shape") <- 1
+#   attr(x, "numknots") <- numknots
+#   attr(x, "knots") <- knots
+#   attr(x, "space") <- space
+#   attr(x, "categ") <- "additive"
+#   x
+# }
+
+# 
+# decr <- function (x, numknots = 0, knots = 0, space = "E") 
+# {
+#   cl <- match.call()
+#   pars <- match.call()[-1]
+#   #attr(x, "nm") <- deparse(pars$x)
+#   attr(x, "nm") <- get_varname(pars$x)
+#   #attr(x, "nm") <- all.vars(pars$x)[1]
+#   #attr(x, "nm") <- rlang::as_name(pars$x)
+#   attr(x, "shape") <- 2
+#   attr(x, "numknots") <- numknots
+#   attr(x, "knots") <- knots
+#   attr(x, "space") <- space
+#   attr(x, "categ") <- "additive"
+#   x
+# }
+
 block.Ord = function(x, order = NULL, numknots = 0, knots = 0, space = "E")
 {
   cl = match.call()
   pars = match.call()[-1]
-  attr(x, "nm") = deparse(pars$x)
+  #attr(x, "nm") = deparse(pars$x)
+  attr(x, "nm") <- get_varname(pars$x)
+  #attr(x, "nm") <- all.vars(pars$x)[1]
+  #attr(x, "nm") <- rlang::as_name(pars$x)
   attr(x, "shape") = 9
   attr(x, "numknots") = numknots
   attr(x, "knots") = knots
@@ -2197,7 +2500,6 @@ makeamat = function(x, sh, Ds = NULL, suppre = FALSE, interp = FALSE,
   #return (amat)
 }
 
-
 ######
 #>=2D
 ######
@@ -2230,9 +2532,16 @@ makeamat_2D = function(x=NULL, sh, grid2=NULL, xvs2=NULL, zeros_ps=NULL, noord_c
             row_id = as.numeric(rownames(grid3))
             cts = row_id[which(row_id%%D1 == 0)]
             #temp: check if zeros_ps contains some point %% D1 = 0
-            if (any((zeros_ps %% D1) == 0)) {
-              zeros_ps_at_cts = zeros_ps[which((zeros_ps %% D1) == 0)]
-              cts_add = row_id[sapply(zeros_ps_at_cts, function(elem) max(which(row_id < elem)))]
+            zeros_ps_at_cts <- zeros_ps[which((zeros_ps %% D1) == 0)]
+            #if (any((zeros_ps %% D1) == 0)) {
+            if(length(zeros_ps_at_cts) > 0){
+              #zeros_ps_at_cts = zeros_ps[which((zeros_ps %% D1) == 0)]
+              #cts_add = row_id[sapply(zeros_ps_at_cts, function(elem) max(which(row_id < elem)))]
+              cts_add <- sapply(zeros_ps_at_cts, function(empty_dom) {
+                prior_rows <- row_id[row_id < empty_dom]
+                if (length(prior_rows) > 0) max(prior_rows) else NA_integer_
+              })
+              cts_add <- cts_add[!is.na(cts_add)]
               cts = unique(sort(c(cts, cts_add)))
             }
             obs = 1:nrow(grid3)
@@ -2455,11 +2764,17 @@ makeamat_2D = function(x=NULL, sh, grid2=NULL, xvs2=NULL, zeros_ps=NULL, noord_c
         amat0_lst = list()
         grid3 = grid2[-zeros_ps, ,drop=FALSE]
         row_id = as.numeric(rownames(grid3))
-        cts = row_id[which(row_id%%D1 == 0)]
-        if(any((zeros_ps %% D1) == 0)){
-          zeros_ps_at_cts = zeros_ps[which((zeros_ps %% D1) == 0)]
-          cts_add = row_id[sapply(zeros_ps_at_cts, function(elem) max(which(row_id < elem)))]
-          #cts = sort(c(cts, cts_add))
+        cts = row_id[which(row_id %% D1 == 0)]
+        zeros_ps_at_cts <- zeros_ps[which((zeros_ps %% D1) == 0)]
+        #if(any((zeros_ps %% D1) == 0)){
+        if(length(zeros_ps_at_cts) > 0){
+          #zeros_ps_at_cts = zeros_ps[which((zeros_ps %% D1) == 0)]
+          #cts_add = row_id[sapply(zeros_ps_at_cts, function(elem) max(which(row_id < elem)))]
+          cts_add <- sapply(zeros_ps_at_cts, function(empty_dom) {
+            prior_rows <- row_id[row_id < empty_dom]
+            if (length(prior_rows) > 0) max(prior_rows) else NA_integer_
+          })
+          cts_add <- cts_add[!is.na(cts_add)]
           cts = unique(sort(c(cts, cts_add)))
         }
         obs = 1:nrow(grid3)
@@ -2749,7 +3064,6 @@ makeamat_2d = function(x=NULL, sh, nr2, nc2, gap, D1=NULL, D2, Ds = NULL, suppre
   #rslt
 }
 
-
 ################################################################
 #local function to be called in makeamat_2D for block ordering
 ################################################################
@@ -2885,8 +3199,12 @@ makeamat_2d_block = function(x=NULL, sh, block.ave = NULL, block.ord = NULL, zer
 #########################
 #empty cell imputation 
 ##########################
-impute_em2 = function(empty_cells, obs_cells, M, yvec, Nd, nd, Nhat, w, domain.ord, grid2, Ds=NULL, sh=NULL, muhat=NULL, lwr=NULL, upp=NULL, vsc=NULL, amat_0=NULL)
+impute_em2 = function(empty_cells, obs_cells, M, yvec, Nd, nd, Nhat, w, domain.ord, grid2, 
+                      Ds=NULL, sh=NULL, muhat=NULL, lwr=NULL, upp=NULL, vsc=NULL, amat_0=NULL,
+                      level=0.95)
 {
+  #new:
+  z.mult = qnorm((1 - level)/2, lower.tail=FALSE)
   ne = length(empty_cells)
   #observed sample size in cells with 0 or 1 n
   nd_ne = nd[empty_cells]
@@ -2894,17 +3212,17 @@ impute_em2 = function(empty_cells, obs_cells, M, yvec, Nd, nd, Nhat, w, domain.o
   zeros_ps = NULL
   if (ne >= 1) {
     #ignore nd=1 now
-    if (any(nd == 1)) {
-      ones_ps = which(nd == 1)
-      ones = length(ones_ps)
+    # if (any(nd == 1)) {
+    #    ones_ps = which(nd == 1)
+    #    ones = length(ones_ps)
       #   yvec_ones = yvec[which(obs_cells %in% ones_ps)]
       #   Nhat_ones = Nhat[which(obs_cells %in% ones_ps)]
-    } 
-    if (any(nd == 0)) {
+    #} 
+    #if (any(nd == 0)) {
       zeros_ps = which(nd == 0)
       zeros = length(zeros_ps)
-    }
-    zeros = ne - ones
+    #}
+   # zeros = ne - ones
   }
   
   lc = rc = 1:ne*0
@@ -2965,7 +3283,9 @@ impute_em2 = function(empty_cells, obs_cells, M, yvec, Nd, nd, Nhat, w, domain.o
       #uppe = c(uppe, (mul + mur)/2 + 2 * sqrt(vr))
       
       if (!is.null(muhat)) {
-        muhatek = (mul - 2*sqrt(vl) + mur + 2*sqrt(vr))/2
+        #muhatek = (mul - 2*sqrt(vl) + mur + 2*sqrt(vr))/2
+        #new: allow level != 0.95
+        muhatek = (mul - z.mult*sqrt(vl) + mur + z.mult*sqrt(vr))/2
         #check if muhatek follows the shape constraint
         lr = c(lc, rc)
         #sh=10 is for block ave
@@ -3006,26 +3326,43 @@ impute_em2 = function(empty_cells, obs_cells, M, yvec, Nd, nd, Nhat, w, domain.o
       
       if (!is.null(vsc)) {
         #varek = (mur + 2*sqrt(vr) - mul + 2*sqrt(vl))^2 / 16 
-        rpt = mur + 2*sqrt(vr); lpt = mul - 2*sqrt(vl)
-        varek = (rpt-lpt)^2/16
+        #rpt = mur + 2*sqrt(vr); lpt = mul - 2*sqrt(vl)
+        #new: allow level != 0.95
+        rpt = mur + z.mult*sqrt(vr); lpt = mul - z.mult*sqrt(vl)
+        #varek = (rpt-lpt)^2/16
+        #new: 
+        varek = (rpt-lpt)^2/(4*z.mult^2)
         vsce = c(vsce, varek)
         if (at_min & (ndek == 0)) {
           lwrek = -1e+5
-          uppek = muhatek + 2*sqrt(varek)
+          #uppek = muhatek + 2*sqrt(varek)
+          #new:
+          uppek = muhatek + z.mult*sqrt(varek)
         } else if (at_max & (ndek == 0)) {
           uppek = 1e+5
-          lwrek = muhatek - 2*sqrt(varek)
+          #lwrek = muhatek - 2*sqrt(varek)
+          #new:
+          lwrek = muhatek + z.mult*sqrt(varek)
         } else if (at_min & (ndek >= 1) & (ndek <= 10)) {
           varek_lwr = max(vsc)
-          lwrek = muhatek - 2*sqrt(varek_lwr)
-          uppek = muhatek + 2*sqrt(varek)
+          #lwrek = muhatek - 2*sqrt(varek_lwr)
+          #uppek = muhatek + 2*sqrt(varek)
+          #new:
+          lwrek = muhatek - z.mult*sqrt(varek_lwr)
+          uppek = muhatek + z.mult*sqrt(varek)
         } else if (at_max & (ndek >= 1) & (ndek <= 10)) {
           varek_upp = max(vsc)
-          lwrek = muhatek - 2*sqrt(varek)
-          uppek = muhatek + 2*sqrt(varek_upp)
+          #lwrek = muhatek - 2*sqrt(varek)
+          #uppek = muhatek + 2*sqrt(varek_upp)
+          #new:
+          lwrek = muhatek - z.mult*sqrt(varek)
+          uppek = muhatek + z.mult*sqrt(varek_upp)
         } else {
-          lwrek = muhatek - 2*sqrt(varek)
-          uppek = muhatek + 2*sqrt(varek)
+          #lwrek = muhatek - 2*sqrt(varek)
+          #uppek = muhatek + 2*sqrt(varek)
+          #new:
+          lwrek = muhatek - z.mult*sqrt(varek)
+          uppek = muhatek + z.mult*sqrt(varek)
         }
         lwre = c(lwre, lwrek)
         uppe = c(uppe, uppek)
@@ -3132,8 +3469,12 @@ impute_em2 = function(empty_cells, obs_cells, M, yvec, Nd, nd, Nhat, w, domain.o
         }
         
         if(!is.null(max_ps) & !is.null(min_ps)){
-          varek_new = (mu_max + 2*sqrt(v_max) - mu_min + 2*sqrt(v_min))^2 / 16 
-          muhatek = (mu_min - 2*sqrt(v_min) + mu_max + 2*sqrt(v_max))/2
+          #varek_new = (mu_max + 2*sqrt(v_max) - mu_min + 2*sqrt(v_min))^2 / 16 
+          #muhatek = (mu_min - 2*sqrt(v_min) + mu_max + 2*sqrt(v_max))/2
+          #new: allow level != 0.95
+          varek_new = (mu_max + z.mult*sqrt(v_max) - mu_min + z.mult*sqrt(v_min))^2 / (4*z.mult^2) 
+          muhatek = (mu_min - z.mult*sqrt(v_min) + mu_max + z.mult*sqrt(v_max))/2
+          
           #?mu_min
           dmem = obs_cells[which(obs_cells%in%min_ps)]
         }
@@ -3145,13 +3486,20 @@ impute_em2 = function(empty_cells, obs_cells, M, yvec, Nd, nd, Nhat, w, domain.o
         
         if (length(nbors_k_mins) == 0) {
           lwrek = -1e+5
-          uppek = muhatek + 2*sqrt(varek)
+          #uppek = muhatek + 2*sqrt(varek)
+          #new:
+          uppek = muhatek + z.mult*sqrt(varek)
         } else if (length(nbors_k_maxs) == 0) {
           uppek = 1e+5
-          lwrek = muhatek - 2*sqrt(varek)
+          #lwrek = muhatek - 2*sqrt(varek)
+          #new:
+          lwrek = muhatek - z.mult*sqrt(varek)
         } else if (length(nbors_k_mins) > 0 & length(nbors_k_maxs) > 0) {
-          uppek = muhatek + 2*sqrt(varek)
-          lwrek = muhatek - 2*sqrt(varek)
+          #uppek = muhatek + 2*sqrt(varek)
+          #lwrek = muhatek - 2*sqrt(varek)
+          #new:
+          uppek = muhatek + z.mult*sqrt(varek)
+          lwrek = muhatek - z.mult*sqrt(varek)
         }
         
         uppe = c(uppe, uppek)
@@ -3206,7 +3554,6 @@ impute_em2 = function(empty_cells, obs_cells, M, yvec, Nd, nd, Nhat, w, domain.o
   return(rslt)
 }
 
-
 ###############################
 #subrountine to find nbors (>=2D)
 ###############################
@@ -3225,13 +3572,15 @@ fn_nbors = function(empty_grids, grid2, mins, maxs){
     for(i in 1:nc){
       pt1 = ptk[i]
       pt2 = ptk[-i]
-      axes = pt1 + c(-1,1)
+      axes = pt1 + c(-1, 1)
       pair_i = matrix(0, nrow=2, ncol=nc)
       pair_i[1, i] = axes[1]; pair_i[1, -i] = pt2
       pair_i[2, i] = axes[2]; pair_i[2, -i] = pt2
       nbors_k = rbind(nbors_k, pair_i)
     }
-    rm_id = unique(c(which(apply(nbors_k, 1, function(e) any(e<mins))), which(apply(nbors_k, 1, function(e) any(e>maxs)))))
+    #rm_id = unique(c(which(apply(nbors_k, 1, function(e) any(e<mins))), which(apply(nbors_k, 1, function(e) any(e>maxs)))))
+    #new: 
+    rm_id <- unique(which(apply(nbors_k, 1, function(e) any(e < mins | e > maxs))))
     if (length(rm_id) > 0) {
       nbors_k = nbors_k[-rm_id, , drop = FALSE]
     }
@@ -3295,77 +3644,76 @@ fn_nbors = function(empty_grids, grid2, mins, maxs){
   return (nb_lst)
 }
 
-
 ####################################################################################
 #compute the variance for n=2...10 cells
 #keep muhat, only compute weighted variance
+#not used anymore; use coneA to project lwr and upp to handle small cells
 ####################################################################################
-impute_em3 = function(small_cells, M, yvec, Nd, nd, Nhat, w, domain.ord, grid2, 
-                      Ds=NULL, sh=NULL, muhat=NULL, lwr=NULL, upp=NULL, 
-                      vsc=NULL, new_obs_cells=NULL, amat_0=NULL)
-{
-  ne = length(small_cells)
-  #observed sample size for n=2...10 cells
-  #the `small_cells` are not empty
-  nd_ne = nd[small_cells]
-  #vsc_ne = vsc[which(new_obs_cells%in%small_cells)]
-  vsc_ne = vsc[small_cells]
-  
-  lc = rc = 1:ne*0
-  if (Nd >= 2) {
-    vsc_all = lwr_all = upp_all = muhat_all = 1:M*0
-    yvec_all = w_all = domain.ord_all = 1:M*0
-    empty_grids = grid2[small_cells, ]
-    maxs = apply(grid2, 2, max)
-    mins = apply(grid2, 2, min)
-    at_max = (empty_grids == maxs)
-    at_min = (empty_grids == mins)
-    
-    vsce = lwre = uppe = muhate = domain.ord_em = NULL
-    ye = we = NULL
-    nslst = pslst = vector('list', 2)
-    nbors = NULL
-    nbors_lst_0 = fn_nbors_2(small_cells, amat_0, muhat)
-    for(k in 1:length(small_cells)){
-      #new: if is new because of rm_id2
-      #nbors_k_maxs = nbors_lst_0$nb_lst_maxs[[k]]
-      #nbors_k_mins = nbors_lst_0$nb_lst_mins[[k]]
-      max_ps = (nbors_lst_0$nb_lst_maxs[[k]])[1]
-      min_ps = (nbors_lst_0$nb_lst_mins[[k]])[1]
-      sm_k = small_cells[k]
-      
-      if(length(max_ps) > 0){      
-        mu_max = muhat[max_ps]
-        v_max = vsc[max_ps]
-      }
-      if(length(min_ps) > 0){
-        mu_min = muhat[min_ps]
-        v_min = vsc[min_ps]
-      }
-      #new:
-      vsc_nek = vsc_ne[k]
-      if(length(min_ps) > 0 & length(max_ps) > 0){
-        varek_new = (mu_max + 2*sqrt(v_max) - mu_min + 2*sqrt(v_min))^2 / 16 
-      }else{
-        varek_new = vsc_nek
-      }
-      #the variance by survey
-      #the if else can be replaced by vectorized computation?
-      vsce = c(vsce, varek_new)
-      #print(c(k, length(vsce)))
-    }
-    
-    if (!is.null(vsc)){
-      vsc_all = vsc
-      vsc_all[small_cells] = vsce
-      vsc = vsc_all  
-    }
-  }
-  #rslt = list(lwr = lwr, upp = upp, vsc = vsc)
-  rslt = list(vsc = vsc)
-  return(rslt)
-}
-
+# impute_em3 = function(small_cells, M, yvec, Nd, nd, Nhat, w, domain.ord, grid2, 
+#                       Ds=NULL, sh=NULL, muhat=NULL, lwr=NULL, upp=NULL, 
+#                       vsc=NULL, new_obs_cells=NULL, amat_0=NULL)
+# {
+#   ne = length(small_cells)
+#   #observed sample size for n=2...10 cells
+#   #the `small_cells` are not empty
+#   nd_ne = nd[small_cells]
+#   #vsc_ne = vsc[which(new_obs_cells%in%small_cells)]
+#   vsc_ne = vsc[small_cells]
+#   
+#   lc = rc = 1:ne*0
+#   if (Nd >= 2) {
+#     vsc_all = lwr_all = upp_all = muhat_all = 1:M*0
+#     yvec_all = w_all = domain.ord_all = 1:M*0
+#     empty_grids = grid2[small_cells, ]
+#     maxs = apply(grid2, 2, max)
+#     mins = apply(grid2, 2, min)
+#     at_max = (empty_grids == maxs)
+#     at_min = (empty_grids == mins)
+#     
+#     vsce = lwre = uppe = muhate = domain.ord_em = NULL
+#     ye = we = NULL
+#     nslst = pslst = vector('list', 2)
+#     nbors = NULL
+#     nbors_lst_0 = fn_nbors_2(small_cells, amat_0, muhat)
+#     for(k in 1:length(small_cells)){
+#       #new: if is new because of rm_id2
+#       #nbors_k_maxs = nbors_lst_0$nb_lst_maxs[[k]]
+#       #nbors_k_mins = nbors_lst_0$nb_lst_mins[[k]]
+#       max_ps = (nbors_lst_0$nb_lst_maxs[[k]])[1]
+#       min_ps = (nbors_lst_0$nb_lst_mins[[k]])[1]
+#       sm_k = small_cells[k]
+#       
+#       if(length(max_ps) > 0){      
+#         mu_max = muhat[max_ps]
+#         v_max = vsc[max_ps]
+#       }
+#       if(length(min_ps) > 0){
+#         mu_min = muhat[min_ps]
+#         v_min = vsc[min_ps]
+#       }
+#       #new:
+#       vsc_nek = vsc_ne[k]
+#       if(length(min_ps) > 0 & length(max_ps) > 0){
+#         varek_new = (mu_max + 2*sqrt(v_max) - mu_min + 2*sqrt(v_min))^2 / 16 
+#       }else{
+#         varek_new = vsc_nek
+#       }
+#       #the variance by survey
+#       #the if else can be replaced by vectorized computation?
+#       vsce = c(vsce, varek_new)
+#       #print(c(k, length(vsce)))
+#     }
+#     
+#     if (!is.null(vsc)){
+#       vsc_all = vsc
+#       vsc_all[small_cells] = vsce
+#       vsc = vsc_all  
+#     }
+#   }
+#   #rslt = list(lwr = lwr, upp = upp, vsc = vsc)
+#   rslt = list(vsc = vsc)
+#   return(rslt)
+# }
 
 ###############################
 #subrountine to find nbors (>=2D)
@@ -3436,6 +3784,7 @@ fn_nbors_3 = function(empty_cells, amat_0, muhat){
     
     if(length(nbors_k_maxs) > 0){
       nbors_k_maxs = nbors_k_maxs[which(muhat[nbors_k_maxs] == max(muhat[nbors_k_maxs]))]
+      #nbors_k_maxs <- nbors_k_maxs[muhat[nbors_k_maxs] == max(muhat[nbors_k_maxs])]
     }
     if(length(nbors_k_mins) > 0){
       nbors_k_mins = nbors_k_mins[which(muhat[nbors_k_mins] == min(muhat[nbors_k_mins]))]
@@ -3575,45 +3924,49 @@ fitted.csvy = function(object,...)
   ans
 }
 
-
 ##############
 #confint.csvy
 ##############
-confint.csvy = function(object, parm = NULL, level = 0.95, type = c("link", "response"),...) {
-  type = match.arg(type)
-  n.mix = object$n.mix
-  #if (n.mix %% 1 != 0 | n.mix <= 0){
-  #  stop("confint function only works when n.mix is a positive integer!")
-  #} else {
-  z.mult = qnorm((1 - level) / 2, lower.tail = FALSE)
-  # vs = vcov(object)
-  vs = object$cov.unscaled
-  #lwr = object$etahat - z.mult * sqrt(vs)
-  #upp = object$etahat + z.mult * sqrt(vs)
-  lwr = object$lwr
-  upp = object$upp
+confint.csvy <- function(object, parm = NULL, level = 0.95, type = c("link", "response"), ...) {
+  family <- object$family
+  type <- match.arg(type)
   
-  lwr = switch(type,
-                link = lwr,
-                response = object$family$linkinv(lwr)
-  )
-  upp = switch(type,
-                link = upp,
-                response = object$family$linkinv(upp)
-  )
+  # Warn if parm is specified but not used
+  if (!is.null(parm)) {
+    warning("'parm' argument is currently ignored and all parameters are returned.")
+  }
   
-  ci.bands = as.data.frame(do.call(cbind, list(lwr, upp)))
-  # learn from confint.svyglm:
-  a = (1 - level) / 2
-  a = c(a, 1 - a)
-  pct = paste0(format(100 * a,
-                       trim = TRUE,
-                       scientific = FALSE, digits = 3
-  ), "%")
-  colnames(ci.bands) = pct
-  return(ci.bands)
-  #}
+  # Validate required components
+  if (is.null(object$lwr) || is.null(object$upp)) {
+    stop("The object must contain 'lwr' and 'upp' components for confidence interval computation.")
+  }
+  
+  # Compute z multiplier
+  z_mult <- qnorm((1 - level) / 2, lower.tail = FALSE)
+  
+  linkinv <- family(object)$linkinv
+  # Extract or transform bounds
+  lwr <- switch(type,
+                link = object$lwr,
+                response = linkinv(object$lwr))
+  
+  upp <- switch(type,
+                link = object$upp,
+                response = linkinv(object$upp))
+  
+  # Construct output
+  ci_bands <- as.data.frame(cbind(lwr, upp))
+  
+  # Label the columns with confidence level
+  alpha <- (1 - level) / 2
+  colnames(ci_bands) <- paste0(format(c(alpha, 1 - alpha) * 100, digits = 3), "%")
+  
+  # Optional: attach confidence level as attribute
+  attr(ci_bands, "conf.level") <- level
+  
+  return(ci_bands)
 }
+
 
 ###############
 #print method
@@ -3639,7 +3992,6 @@ vcov.csvy = function(object,...){
   }
   return(v)
 }
-
 
 #############################################
 #summary for csvy
@@ -3735,7 +4087,7 @@ print.summary.csvy = function(x,...) {
   print(x$call)
   cat("\n")
   cat("Null deviance: ", round(x$null.deviance, 4), "", "on", x$df.null, "", "degrees of freedom", "\n")
-  cat("Residual deviance: ", round(x$deviance, 4), "", "on", x$df.residual, "", "observed degrees of freedom", "\n")
+  cat("Residual deviance: ", round(x$deviance, 4), "", "on", x$df.residual, "", "degrees of freedom", "\n")
   if (!is.null(x$coefficients)) {
     cat("\n")
     cat("Approximate significance of constrained fit: \n")
@@ -3744,8 +4096,12 @@ print.summary.csvy = function(x,...) {
   if (!is.null(x$CIC)) {
     cat("CIC (constrained estimator): ", round(x$CIC, 4))
     cat("\n")
-    cat("CIC (unconstrained estimator): ", round(x$CIC.un, 4))
+    if (!is.null(x$CIC.un)) {
+      cat("CIC (unconstrained estimator): ", round(x$CIC.un, 4), "\n")
+    }
+    #cat("CIC (unconstrained estimator): ", round(x$CIC.un, 4))
   }
+  invisible(x)
 }
 
 
@@ -3755,395 +4111,358 @@ print.summary.csvy = function(x,...) {
 predict.csvy = function(object, newdata=NULL, type=c("link","response"), 
                         se.fit=TRUE, level=0.95, n.mix=100,...)
 {
-  family = object$family
-  type = match.arg(type)
+  family <- object$family
+  type <- match.arg(type)
   if (!inherits(object, "csvy")) { 
     warning("calling predict.csvy(<fake-csvy-object>) ...")
   }
   #match newdata with grid
-  xnms_add = object$xnms_add
-  grid2 = object$grid
-  colnames(grid2) = xnms_add
+  xnms_add <- object$xnms_add
+  grid2 <- object$grid
+  colnames(grid2) <- xnms_add
   #add colnames in the object?
   if (missing(newdata) || is.null(newdata)) {
-    newdata = grid2
+    newdata <- grid2
+  } else {
+    #change it to be that rows in new data must exist in grid2
+    if (!is.data.frame(newdata)) {
+      stop ("newdata must be a data frame!")	
+    } 
+    if (is.data.frame(newdata) & any(!colnames(newdata) %in% xnms_add)) {
+      missing_vars <- setdiff(xnms_add, colnames(newdata))
+      stop("newdata is missing the following required predictor(s): ", paste(missing_vars, collapse = ", "))
+    }
   }
-  if (!is.data.frame(newdata)) {
-    stop ("newdata must be a data frame!")	
-  }
+  
   #learnt from predict.svyglm:
   #if (type=="terms")
   #  return(predterms(object,se=se.fit,...))
   #make it simpler?
-  if(ncol(newdata) == 1){
-    ps = apply(newdata, 1, function(elem) grid2[which(apply(grid2, 1, function(gi) all(gi == elem))),])
-  }
-  if(ncol(newdata) > 1){
-    ps0 = sapply(colnames(newdata), function(elem) which(sapply(colnames(grid2), function(gi) all(gi == elem))))
+  #if(ncol(newdata) == 1){
+  #  ps = apply(newdata, 1, function(elem) grid2[which(apply(grid2, 1, function(gi) all(gi == elem))),])
+  #}
+  
+  #re-order columns when we have >= 2 predictors
+  if(NCOL(newdata) > 1){
+    ps0 <- sapply(colnames(newdata), function(elem) which(sapply(colnames(grid2), function(gi) all(gi == elem))))
     #order the column in case the user doesn't define the variables as the order used in the formula
-    newdata = newdata[, as.numeric(ps0)]
-    ps = apply(newdata, 1, function(elem) which(apply(grid2, 1, function(gi) all(gi == elem))))
+    newdata <- newdata[, as.numeric(ps0)]
+    #ps = apply(newdata, 1, function(elem) which(apply(grid2, 1, function(gi) all(gi == elem))))
+  }
+  ps <- match_rows(newdata, grid2)
+  # if(anyNA(ps)){
+  #   undefined_rows <- newdata[which(is.na(ps)), , drop = FALSE]
+  #   stop("The following rows have undefined domains:\n", paste(capture.output(print(undefined_rows)), collapse = "\n"))
+  # }
+  #identify rows with undefined predictions
+  na_rows <- which(is.na(ps))
+  if (all(is.na(ps))) {
+    stop("None of the domains in 'newdata' are defined in the model.")
+  } else if (length(na_rows) > 0) {
+    removed_rows <- newdata[na_rows, , drop = FALSE]
+    warning("The following rows were removed because their domains are not defined in the model:\n",
+            paste(capture.output(print(removed_rows)), collapse = "\n"))
+    newdata <- newdata[-na_rows, , drop = FALSE]
+    ps <- ps[-na_rows]
   }
   
-  etahat = object$etahat 
-  vsc_mix = object$cov.unscaled
-  
+  #print (ps)
+  #if object$n.mix = 0, then set n.mix=100 and simulate vsc_mix, lwr, upp
+  #otherwise, mixture covariance is already computed in the object, just use vsc_mix, lwr, upp
+  etahat <- object$etahat 
+  vsc_mix <- object$vsc_mix 
+  lwr <- object$lwr
+  upp <- object$upp
   #interval = match.arg(interval)
   if(!se.fit) {
     fit = etahat[ps]
-    fit = switch(type, link = fit, response = object$family$linkinv(fit))
-    return (fit)
+    fit = switch(type, response = family(object)$linkinv(fit), link = fit)
+    return (list(fit = fit))
   } else {
-    #when n.mix = 0, then there is no vsc_mix
-    if(is.null(vsc_mix)) {
-      ynm = object$ynm
-      amat = object$amat
-      nd = object$nd
+    #when n.mix = 0, then the vsc_mix is the unconstrained variance
+    #if (n.mix < 1) {
+    #  stop("Argument 'n.mix' must be >= 1 to simulate a mixture covariance matrix.")
+    #}
+    use_parallel = isTRUE(getOption("csurvey.multicore", FALSE))
+    #decide how many cores to use
+    cores = 1
+    if(use_parallel){
+      cores = getOption("csurvey.cores", parallel::detectCores(logical = FALSE) - 1)
+      #cores = min(8, getOption("csurvey.cores", parallel::detectCores(logical = FALSE) - 1))
+      cores = max(1, cores)
+    }
+    #detect OS platform
+    is_windows = .Platform$OS.type == "windows"
+    if(object$n.mix == 0) {
+      c(ynm, amat, nd, muhat, etahatu, w, v1, domain.ord, xvs2, xm.red, ne, zeros_ps, obs_cells, zeros, Nhat, Ds, sh, amat_0, Nd) %<-% list(
+        object$ynm, object$amat, object$nd, object$muhat, object$etahatu, object$w, object$cov.un, object$domain.ord, object$xvs2, object$xm.red, object$ne,
+        object$empty_cells, object$obs_cells, object$zeros, object$Nhat, object$Ds, object$shapes_add, object$amat_0, object$Nd)
+      
+      #M = object$M #excluded empty cells
       M = length(nd)
-      muhat = object$muhat
-      #add in csvy
-      #revise later: etahat.s
-      etahatu = object$etahatu
-      w = object$w
-      v1 = object$cov.un
-      domain.ord = object$domain.ord
-      #move the imputation code to be in predict.csvy
-      xm.red = object$xm.red
-      ne = object$ne
-      xvs2 = apply(xm.red, 2, function(x) 1:length(unique(x)))
-      zeros_ps = empty_cells = object$empty_cells
-      small_cells = object$small_cells
-      obs_cells = object$obs_cells
-      nsm = length(small_cells)
-      zeros = object$zeros
-      Nhat = object$Nhat
-      Ds = object$Ds
-      sh = object$shapes_add
-      amat_0 = object$amat_0
-      Nd = object$Nd
-      
-      lwr = upp = NULL
-      acov = v1
-      dp = -t(amat)
-      dp = apply(dp, 2, function(e) e / (sum(e^2))^(.5))
-      
+      empty_cells = zeros_ps
+      #nsm = length(small_cells)
       M = M - zeros
-      m_acc = M
-      sector = NULL
-      times = NULL
-      df.face = NULL
-      iter = 1
-      obs = 1:M
       #ysims = MASS::mvrnorm(n.mix, mu=muhat, Sigma=v1)
-      n.mix = 100
+      #n.mix = 100
       #binomial can use mvrnorm?
       #etahat returned from object has been imputed
       if(length(empty_cells) > 0){
         etahat = etahat[-empty_cells]
-      }
-      ysims = MASS::mvrnorm(n.mix, mu=etahat, Sigma=v1)
-      for (iloop in 1:n.mix) {
-        #ysim is the group mean
-        #new:
-        ysim = ysims[iloop, ]
-        ansi = coneA(ysim, amat, w=w, msg=FALSE)
-        etahati = round(ansi$thetahat, 10)
-        facei = ansi$face
-        if (length(facei) == 0) {
-          next
-        } else {
-          sec = 1:nrow(amat)*0
-          sec[facei] = 1
-          
-          r = makebin(sec) + 1
-          if (iter == 1) {
-            df.face = rbind(df.face, c(r, 1))
-            sector = rbind(sector, sec)
-          } else {
-            if (r %in% df.face[,1]) {
-              ps = which(df.face[,1] %in% r)
-              df.face[ps,2] = df.face[ps,2] + 1
-            } else {
-              df.face = rbind(df.face, c(r, 1))
-              sector = rbind(sector, sec)
-            }
-          }
-          iter = iter+1
-        }
+        #new: domain.ord has been imputed
+        domain.ord = domain.ord[-empty_cells]
       }
       
-      if (!is.null(df.face)) {
-        imat = diag(M)
-        sm_id = which((df.face[,2]/n.mix) < 1e-3)
-        if (any(sm_id)) {
-          df.face = df.face[-sm_id, ,drop=FALSE]
-          sector = sector[-sm_id, ,drop=FALSE]
+      #get the constrained variance-covariance matrix
+      #lwr = upp = NULL
+      #acov = v1
+      dp = -t(amat)
+      dp = apply(dp, 2, function(e) e / (sum(e^2))^(.5))
+      #test!
+      #dp = Matrix(dp, sparse = TRUE)
+      
+      m_acc = M 
+      sector = NULL
+      #binomial can use mvrnorm?
+      ysims = rbind(MASS::mvrnorm(n.mix, mu=etahat, Sigma=v1))
+      #new: 2025
+      if(use_parallel && cores > 1){
+        #message(sprintf("Running in parallel using %d cores.", cores))
+        if(is_windows){
+          # Windows: use parLapply with a PSOCK cluster
+          cl = parallel::makeCluster(cores)
+          on.exit(parallel::stopCluster(cl))  # ensure cleanup
+          mixture_rslt = parallel::parLapply(cl, 1:n.mix, compute_mixture, ysims=ysims, amat=amat, w=w)
+        } else {
+          # Unix/macOS: use mclapply
+          mixture_rslt = parallel::mclapply(1:n.mix, compute_mixture, ysims=ysims, amat=amat, w=w)
+          #cat('finished mixture', '\n')
         }
-        nsec = nrow(df.face)
-        bsec = df.face
-        bsec[,2] = bsec[,2] / sum(bsec[,2])
-        
+      }else{
+        #message("Running in serial mode.")
+        mixture_rslt = lapply(1:n.mix, compute_mixture, ysims=ysims, amat=amat, w=w)
+      }
+      
+      mixture_rslt <- do.call(rbind, mixture_rslt) |> as.data.frame()
+      bsec = aggregate(list(freq = rep(1, nrow(mixture_rslt))), mixture_rslt, length) |>
+        mutate(prob = freq / sum(freq)) |>
+        dplyr::select(freq, prob, everything())
+      
+      sector = bsec[, -c(1, 2), drop = FALSE]
+      nsec = NROW(sector)
+      imat = diag(M)
+      if(nsec > 0){
         acov = matrix(0, nrow=M, ncol=M)
         wtinv = diag(1/w)
-        for(is in 1:nsec) {
-          jvec = sector[is, ]
-          smat = dp[,which(jvec==1),drop=FALSE]
-          wtinvs = wtinv %*% smat
-          pmat_is_p = wtinv %*% smat %*% solve(t(smat) %*% wtinv %*% smat) %*% t(smat)
-          pmat_is = (imat-pmat_is_p)
-          acov = acov + bsec[is,2]*pmat_is%*%v1%*%t(pmat_is)
+        for(isec in 1:nsec){
+          #print (isec)
+          jvec = sector[isec, ]
+          if(all(jvec == 0)){
+            next 
+          } else {
+            smat = dp[, which(jvec == 1), drop = FALSE]
+            wtinv_sm = wtinv %*% smat
+            pmat_is_p = wtinv_sm %*% solve(t(smat) %*% wtinv_sm, t(smat))
+            pmat_is = (imat - pmat_is_p)
+            p_j = bsec[isec,2]
+            acov = acov + p_j * pmat_is%*%v1%*%t(pmat_is)
+          }
         }
       } else {
         acov = v1
       }
+      
       z.mult = qnorm((1 - level)/2, lower.tail=FALSE)
-      #z.mult = 2
       vsc = diag(acov)
       hl = z.mult*sqrt(vsc)
-      lwr = loweta = etahat - hl
-      upp = uppeta = etahat + hl
+      lwr = etahat - hl
+      upp = etahat + hl
       
+      #add unconstr: in case the level in predict is different from the 
+      #level in csvy?
       vscu = diag(v1)
       hlu = z.mult*sqrt(vscu)
-      lwru = lowetau = etahatu - hlu
-      uppu = uppetau = etahatu + hlu
+      lwru = etahatu - hlu
+      uppu = etahatu + hlu
       
-      if(is.matrix(xvs2)){
-        grid2 = expand.grid(as.data.frame(xvs2))
-      }else if(is.list(xvs2)){
-        grid2 = expand.grid(xvs2)
-      }
-      
-      if (ne >= 1) {
-        #muhatu = yvecu
+      grid2 = expand.grid(xvs2, KEEP.OUT.ATTRS = FALSE, stringsAsFactors = FALSE)
+      if(ne >= 1){
+        #etahatu = yvecu
         #new: if there's empty cells, just augment muhatu to include NA's
         etahatu_all = 1:(M+zeros)*0
         etahatu_all[zeros_ps] = NA
         etahatu_all[obs_cells] = etahatu
         etahatu = etahatu_all
         
-        ans_im = impute_em2(empty_cells, obs_cells, M=(M+zeros), etahatu, Nd, nd, Nhat, w,
-                            domain.ord, grid2, Ds, sh, etahat, lwr, upp, vsc, amat_0)
-        #ans_im = with(object, impute_em2(empty_cells, obs_cells, M=(M+zeros), etahatu, Nd, nd, Nhat, w,
-        #                    domain.ord, grid2, Ds, sh, etahat, lwr, upp, vsc, amat_0))
+        lwru_all = 1:(M+zeros)*0
+        lwru_all[zeros_ps] = NA
+        lwru_all[obs_cells] = lwru
+        lwru = lwru_all
+        
+        uppu_all = 1:(M+zeros)*0
+        uppu_all[zeros_ps] = NA
+        uppu_all[obs_cells] = uppu
+        uppu = uppu_all
+        
+        #for monotone only: to find the c.i. for empty/1 cells by using smallest L and largest U of neighbors
+        #new: create grid2 again because the routines to do imputation need to have each x start from 1
+        #xvs2 = apply(xm.red, 2, function(x) 1:length(unique(x)))
+        xvs2 <- lapply(xm.red, function(x) sort(unique(x)))
+        grid2 = expand.grid(xvs2, KEEP.OUT.ATTRS = FALSE, stringsAsFactors = FALSE)
+        #revise later: replace lwru with lwr etc
+        ans_im = impute_em2(empty_cells, obs_cells, M=(M+zeros), etahatu, Nd, nd, Nhat, w, 
+                            domain.ord, grid2, Ds, sh, etahat, lwr=lwr, upp=upp, vsc=vsc, amat_0, level=level)
         etahat = ans_im$muhat
-        lwr = ans_im$lwr
-        upp = ans_im$upp
+        #lwr = ans_im$lwr
+        #upp = ans_im$upp
         vsc = ans_im$vsc
         domain.ord = ans_im$domain.ord
       }
       
-      sig1 = vsc
-      sig2 = NULL
-      if (Nd >= 1 & nsm >= 1) {
-        new_obs_cells = sort(unique(c(empty_cells, obs_cells)))
-        if(Nd == 1){
-          ans_im2 = impute_em2(small_cells, new_obs_cells, M=(M+zeros), etahatu,
-                               Nd, nd, Nhat, w, domain.ord, grid2, Ds, sh, etahat,
-                               lwr, upp, vsc, amat_0)
-          #ans_im2 = with(object, impute_em2(small_cells, new_obs_cells, M=(M+zeros), etahatu,
-          #         Nd, nd, Nhat, w, domain.ord, grid2, Ds, sh, etahat, lwr, upp, vsc, amat_0))
-          sig2 = ans_im2$vsc
-        }
-        if(Nd >= 2){
-          ans_im2 = impute_em3(small_cells, M=(M+zeros), etahatu, Nd, nd, Nhat, w, domain.ord,
-                               grid2, Ds, sh, etahat, lwr, upp, vsc, new_obs_cells, amat_0)
-          sig2 = ans_im2$vsc
-        }
+      vsc_mix = vsc
+      
+      hl = z.mult*sqrt(vsc_mix)
+      lwr = etahat - hl
+      upp = etahat + hl
+      
+      #new: check monotonicity of lwr and upp
+      sh_0 = sh
+      #relabel sh == 1 and 9?
+      if(any(sh == 9)){
+        sh_0[which(sh == 9)] = 1
+      }
+      #remove sh = 0, there is no amat for sh = 0
+      Ds_0 = Ds
+      if(any(sh == 0)){
+        rm_id = which(sh == 0)
+        sh_0 = sh_0[-rm_id]
+        Ds_0 = Ds[-rm_id]
       }
       
-      vsc_mix = sig1
-      vsc_mix_imp = NULL
-      if (Nd >= 1 & nsm >= 1) {
-        imp_ps = sort(c(zeros_ps, small_cells))
-        nd_imp_ps = nd[imp_ps]
-        l_imp_ps = length(nd_imp_ps)
-        
-        sig1_imp = sig1[imp_ps]
-        sig2_imp = sig2[imp_ps]
-        
-        vsc_mix_imp = 1:l_imp_ps*0
-        #tmp:
-        if(Nd > 1){
-          nbors_lst_0 = fn_nbors_2(small_cells, amat_0, muhat)
-        }
-        
-        k_sm = 1
-        for(k in 1:l_imp_ps){
-          ndek = nd_imp_ps[k]
-          s1k = sig1_imp[k]
-          s2k = sig2_imp[k]
-          #tmp
-          if(Nd > 1 & ndek > 0){
-            max_ps = nbors_lst_0$nb_lst_maxs[[k_sm]]
-            min_ps = nbors_lst_0$nb_lst_mins[[k_sm]]
-            #max_ps = min_ps = NULL
-            if(length(max_ps)>0){
-              mu_max = muhat[max_ps]
-            }
-            if(length(min_ps)>0){
-              mu_min = muhat[min_ps]
-            }
-            k_sm = k_sm + 1
-          } else if (Nd == 1 | ndek == 0) {
-            min_ps = max_ps = 1
-          }
-          
-          #when min_ps or max_ps = NULL: kth cell is in a 2D case, small cell, at the edge of the
-          #grid and there is only one constraint in amat
-          if(length(min_ps) == 0 | length(max_ps) == 0) {
-            varek = s1k
-          } else {
-            if(ndek == 0){
-              #varek = s1k
-              varek = s2k
-            } else if (ndek == 1) {
-              varek = s1k*.2 + s2k*.8
-            } else if(ndek == 2 | ndek == 3){
-              varek = s1k*.3 + s2k*.7
-            }else if(ndek == 4 | ndek == 5){
-              varek = s1k*.6 + s2k*.4
-            }else if(ndek == 6 | ndek == 7){
-              varek = s1k*.6 + s2k*.4
-            }else if(ndek == 8 | ndek == 9 | ndek == 10){
-              varek = s1k*.8 + s2k*.2
-            }#else if(ndek == 10){
-            #  varek = s1k*.8 + s2k*.2
-            #}
-          }
-          vsc_mix_imp[k] = varek
-        }
-        vsc_mix[imp_ps] = vsc_mix_imp
+      #print (dim(amat_0))
+      #print (length(lwr))
+      check_ps_lwr = round(c(amat_0 %*% lwr), 4) 
+      check_ps_upp = round(c(amat_0 %*% upp), 4) 
+      not_monotone_ci = any(check_ps_lwr < 0) | any(check_ps_upp < 0)
+      #check more
+      wvec = nd/sum(nd)
+      if(any(wvec == 0)){
+        #wvec[which(wvec == 0)] = 1e-4# 1e-12 #1e-4
+        wvec[which(wvec == 0)] = pmin(1e-5, min(wvec[wvec > 0]))
       }
+      #wvec[wvec == 0] <- 1e-4  
+      
+      vsc_mix_0 = vsc_mix
+      # if (length(sh_0) == 1 & n.mix > 0 & not_monotone_ci) {
+      #   lwr = coneA(lwr, amat_0, w = wvec)$thetahat
+      #   upp = coneA(upp, amat_0, w = wvec)$thetahat
+      #   vsc_mix_0 = ((upp - lwr) / 4)^2
+      # }
+      
+      #new:
+      check_ps_etahat = round(c(amat_0 %*% etahat), 4) 
+      if (length(sh_0) > 1 & n.mix > 0 & any(check_ps_etahat < 0)) {
+        etahat = coneA(etahat, amat_0, w = wvec)$thetahat
+      }
+      
+      #handles small domains automatically
+      if (length(sh_0) >= 1 & n.mix > 0 & not_monotone_ci) {
+        lwr = coneA(lwr, amat_0, w = wvec)$thetahat
+        upp = coneA(upp, amat_0, w = wvec)$thetahat
+        #new:
+        #vsc_mix_0 = ((upp - lwr) / 4)^2
+        #new:
+        vsc_mix_0 = ((upp - lwr) / (2*z.mult))^2
+      }
+      #new: should let vsc_mix = vsc_mix_0 
+      vsc_mix = vsc_mix_0 
     }
     #eta = etahat[ps]; se = vsc[ps]
     #learnt from predict.svyglm:
-    z.mult = qnorm((1 - level)/2, lower.tail=FALSE)
+    #z.mult = qnorm((1 - level)/2, lower.tail=FALSE)
     fit = etahat[ps]
     se.fit = sqrt(vsc_mix[ps])
-    lwr = etahat[ps] - z.mult*se.fit
-    upp = etahat[ps] + z.mult*se.fit
+    lwr = lwr[ps]
+    upp = upp[ps]
+    #lwr = etahat[ps] - z.mult*se.fit
+    #upp = etahat[ps] + z.mult*se.fit
     
-    #new: make a copy; not change endpoints' c.i.
-    lwr_0 = lwr
-    upp_0 = upp
-    #new: learn from cgam; nasa's idea
-    #for now, only handles one predictor
-    sh = object$shapes_add
-    if (length(sh) == 1) {
-      nci = length(lwr)
-      if (sh == 1) #incr
-      {
-        for(i in (nci - 1):1)
-        {
-          if(upp[i] > upp[i + 1])
-          {
-            upp[i] = upp[i + 1]
-          }
-        }
-        for(i in 1:(nci - 1))
-        {
-          if(lwr[i + 1] < lwr[i])
-          {
-            lwr[i + 1] = lwr[i]
-          }
-        } 
-        
-        #new: don't change endpoints' ci!
-        lwr[1] = lwr_0[1]
-        upp[1] = upp_0[1]
-        lwr[nci] = lwr_0[nci]
-        upp[nci] = upp_0[nci]
-      }
-      
-      if (sh == 2) #decr
-      {
-        for(i in (nci - 1):1)
-        {
-          if(lwr[i] < lwr[i + 1])
-          {
-            lwr[i] = lwr[i + 1]
-          }
-        }
-        
-        for(i in 1:(nci - 1))
-        {
-          if(upp[i + 1] > upp[i])
-          {
-            upp[i + 1] = upp[i]
-          }
-        }
-        
-        #new: don't change endpoints' ci!
-        lwr[1] = lwr_0[1]
-        upp[1] = upp_0[1]
-        lwr[nci] = lwr_0[nci]
-        upp[nci] = upp_0[nci]
-      }
-    }
-    
-    fit = switch(type, link = fit, response = object$family$linkinv(fit))
-    lwr = switch(type, link = lwr, response = object$family$linkinv(lwr))
-    upp = switch(type, link = upp, response = object$family$linkinv(upp))
-    se.fit = switch(type, link = se.fit, response = object$family$linkinv(se.fit))
-    
-    #no unconstrained:...
-    if(type=='link'){
-      ans = list(fit = fit, lwr = lwr, upp = upp, se.fit = se.fit)
-    }
-    if(type=='response'){
-      ans = list(fit = fit, lwr = lwr, upp = upp)
-    }
+    lwr = switch(type, response = object$family$linkinv(lwr), link = lwr)
+    upp = switch(type, response = object$family$linkinv(upp), link = upp)
+    #se.fit = switch(type, link = se.fit, response = object$family$linkinv(se.fit))
+    se.fit <- switch(type, response = se.fit * abs(object$family$mu.eta(fit)), link = se.fit)
+    fit = switch(type, response = object$family$linkinv(fit), link = fit)
+    return (list(fit = fit, lwr = lwr, upp = upp, se.fit = se.fit))
   }
-  return (ans)
 }
-
 
 #---------------------------------------------------------------------------------------------------------------------------------------
 #routines modified from methods of svyby or svyglm, svyrepglm
 #---------------------------------------------------------------------------------------------------------------------------------------
-# dotchart.csvy = function(x,...,pch = 19){
-#   xx = x$ans.unc_cp
-#   dotchart(xx,...,pch = pch)
+# dotchart.csvy <- function(x, ..., pch = 19) {
+#   xx <- x$ans.unc_cp
+#   args <- list(...)
+#   if (is.null(args$pch)) args$pch <- pch
+#   do.call(survey::dotchart, c(list(xx), args))
 # }
 
 #---------------------------------------------------------------------------------------------------------------------------------------
-deff.csvy = function(object,...) {
-  x = object$ans.unc_cp
-  deff(x,...)
+deff.csvy <- function(object, ...) {
+  if (is.null(object$ans.unc_cp)) {
+    stop("Cannot compute design effect: object$ans.unc_cp is NULL.")
+  }
+  survey::deff(object$ans.unc_cp, ...)
 }
 
 #---------------------------------------------------------------------------------------------------------------------------------------
 barplot.csvy = function(height, beside = TRUE,...){
   x = height$ans.unc_cp
   #survey:::barplot.svyby(xx, beside = TRUE,...)
-  barplot(x, beside = TRUE,...)
+  graphics::barplot(x, beside = TRUE,...)
 }
 
 #plot.csvy = barplot.csvy
 #---------------------------------------------------------------------------------------------------------------------------------------
 SE.csvy = function(object,...){
   x = object$ans.unc_cp
-  SE(x,...)
+  survey::SE(x,...)
 }
 
 #---------------------------------------------------------------------------------------------------------------------------------------
 coef.csvy = function(object, ...) {
   x = object$ans.unc_cp
-  coef(x,...)
+  stats::coef(x,...)
 }
 
 #---------------------------------------------------------------------------------------------------------------------------------------
 svycontrast.csvy = function(stat, contrasts,...) {
   x = stat$ans.unc_cp
-  svycontrast(x, contrasts,...)
+  survey::svycontrast(x, contrasts,...)
 }
 
 #---------------------------------------------------------------------------------------------------------------------------------------
 #fix
 ftable.csvy = function(x,...) {
   xx = x$ans.unc_cp
-  ftable(xx,...)
+  stats::ftable(xx,...)
+}
+
+#####################################################################
+#for parallel
+#####################################################################
+.onLoad <- function(libname, pkgname) {
+  op <- options()
+  op.csurvey <- list(
+    csurvey.multicore = FALSE,
+    csurvey.cores = max(1, parallel::detectCores(logical = FALSE) - 1)
+  )
+  toset <- !(names(op.csurvey) %in% names(op))
+  if (any(toset)) options(op.csurvey[toset])
+  invisible()
+}
+
+.get_csurvey_option <- function(name, default = NULL) {
+  getOption(paste0("csurvey.", name), default)
 }
 
 #---------------------------------------------------------------------------------------------------------------------------------------
