@@ -179,6 +179,7 @@ plot.csvy <- function(x, x1 = NULL, x2 = NULL, domains = NULL,
         x = x_numeric,
         fit_type = "constrained",
         muhat = linkinv(object$etahat),
+        nd = object$nd, 
         lwr = if (!is.null(object$lwr)) linkinv(object$lwr) else NA_real_,
         upp = if (!is.null(object$upp)) linkinv(object$upp) else NA_real_
       )
@@ -190,6 +191,7 @@ plot.csvy <- function(x, x1 = NULL, x2 = NULL, domains = NULL,
         x = x_numeric,
         fit_type = "unconstrained",
         muhat = linkinv(object$etahatu),
+        nd = object$nd, 
         lwr = if (!is.null(object$lwru)) linkinv(object$lwru) else NA_real_,
         upp = if (!is.null(object$uppu)) linkinv(object$uppu) else NA_real_
       )
@@ -241,8 +243,17 @@ plot.csvy <- function(x, x1 = NULL, x2 = NULL, domains = NULL,
       theme_minimal(base_size = 13) +
       theme(
         legend.position = if (isTRUE(legend)) "top" else "none",
-        axis.text.x = element_text(angle = angle, hjust = hjust, size = 9)  # add a angle for xticks
+        axis.text.x = element_text(angle = angle, hjust = hjust, size = x1size)  # add a angle for xticks
       )
+    
+    #test more: mark NA's or empty domains even when they are imputed
+    if(anyNA(df_long[, c("muhat")]) || any(df_long[, "nd"] == 0)){
+      y_min <- min(df_long$muhat, df_long$lwr, df_long$upp, na.rm = TRUE)
+      y_min_offset <- y_min - 0.01 * diff(range(c(df_long$muhat, df_long$lwr, df_long$upp), na.rm = TRUE))
+      p <- p + geom_point(
+        data = df_long |> filter(is.na(muhat) | is.na(lwr) | is.na(upp) | nd == 0),
+        aes(x = x, y = y_min_offset), shape = 4, size = 1.5, stroke = 1, color = "red", inherit.aes = FALSE)
+    }
     
     if(!is.null(domains)){
       if(NCOL(domains) > 1){
@@ -394,6 +405,7 @@ plot.csvy <- function(x, x1 = NULL, x2 = NULL, domains = NULL,
         muhat = out$muhat, 
         lwr = out$lwr, 
         upp = out$upp,
+        nd = out$nd, 
         block = if (M == (D1*D2)) rep(1:D2, each = D1) else rep(1:(D1 * D2), each = M / (D1 * D2)) 
       )
       df_con[[x1lab]] <- out$grid[[x1nm]]
@@ -410,6 +422,7 @@ plot.csvy <- function(x, x1 = NULL, x2 = NULL, domains = NULL,
         muhat = out$muhat, 
         lwr = out$lwr, 
         upp = out$upp,
+        nd = out$nd, 
         block = if (M == (D1*D2)) rep(1:D2, each = D1) else rep(1:(D1 * D2), each = M / (D1 * D2)) 
       )
       df_unc[[x1lab]] <- out$grid[[x1nm]]
@@ -603,13 +616,15 @@ plot.csvy <- function(x, x1 = NULL, x2 = NULL, domains = NULL,
                         size = x1size)
     }
 
-    #test more: mark NA's 
-    if(anyNA(plot_df[, c("muhat")])){
+    #test more: mark NA's or empty domains even when they are imputed
+    if(anyNA(plot_df[, c("muhat")]) || any(plot_df[, "nd"] == 0)){
+      y_min <- min(plot_df$muhat, plot_df$lwr, plot_df$upp, na.rm = TRUE)
+      y_min_offset <- y_min - 0.01 * diff(range(c(plot_df$muhat, plot_df$lwr, plot_df$upp), na.rm = TRUE))
       p <- p + geom_point(
-        data = plot_df |> filter(is.na(muhat) | is.na(lwr) | is.na(upp)),
-        aes(x = domain, y = 0), shape = 4, size = 2, stroke = 1, color = "red", inherit.aes = FALSE) +
-        guides(color = guide_legend(override.aes = list(shape = 4, color = "red"))) + 
-        annotate("text", x = Inf, y = -Inf, label = "'x' = missing value", hjust = 1.1, vjust = -1, color = "red", size = 3.2)
+        data = plot_df |> filter(is.na(muhat) | is.na(lwr) | is.na(upp) | nd == 0),
+        aes(x = domain, y = y_min_offset), shape = 4, size = 1.5, stroke = 1, color = "red", inherit.aes = FALSE)# +
+        #guides(color = guide_legend(override.aes = list(shape = 4, color = "red"))) + 
+        #annotate("text", x = Inf, y = -Inf, label = "'x' = empty domain", hjust = 1.1, vjust = -1, color = "red", size = 3.2)
     }
 
     if(!is.null(domains)){

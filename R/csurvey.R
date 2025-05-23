@@ -1541,6 +1541,7 @@ reorder_outputs <- function(object, x1nm, x2nm, x3nm = NULL, grid=NULL, keep_id=
   list(
     grid = grid_new,
     muhat = linkinv(if (is_constrained) object$etahat[ps] else object$etahatu[ps])[index],
+    nd = (object$nd[ps])[index],
     lwr = lwr, 
     upp = upp
     #lwr =  linkinv(if (is_constrained) object$lwr[ps]    else object$lwru[ps])[index],
