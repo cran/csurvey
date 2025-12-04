@@ -241,8 +241,6 @@ mean and total can also be obtained with \code{\link[survey]{calibrate}}.
 
 
 \examples{
-library(cgam)
-incr <- cgam::incr
 # Example 1: monotonic in 1 predictor
 data(nhdat2, package = 'csurvey')
 #specify the design:
@@ -275,11 +273,7 @@ ans <- csvy(chol ~ incr(age)*incr(wcat)*icat, design = dstrat, test=FALSE, n.mix
 plot(ans, x1='icat', x2='wcat')
 
 #create control object
-ctl <- plot_csvy_control(
-  ribbon_fill = "pink",
-  x1lab = 'income',
-  x2lab = 'waist'
-)
+ctl <- plot_csvy_control(ribbon_fill = "pink",x1lab = 'income',x2lab = 'waist')
 
 plot(ans, x1='icat', x2='wcat', control=ctl)
 }
@@ -304,11 +298,8 @@ summary(ans)
 plot(ans, x1 = 'BMIgroup', x2 = 'Education')
 
 ctl <- plot_csvy_control(
-  x1size = 1.5,
-  x2size = 2,
-  angle = 45,
-  hjust = .3
-)
+  x1size = 1.5, x2size = 2,
+  angle = 45, hjust = .3)
 
 plot(ans, x1 = 'Education', x2 = 'BMIgroup', control = ctl)
 

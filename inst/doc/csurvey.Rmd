@@ -1,0 +1,196 @@
+---
+title: "Workflow for the R Package csurvey"
+output: rmarkdown::html_vignette
+vignette: >
+  %\VignetteIndexEntry{csurvey: Workflow Vignette}
+  %\VignetteEngine{knitr::rmarkdown}
+  %\VignetteEncoding{UTF-8}
+---
+
+```{r setup, include=FALSE}
+knitr::opts_chunk$set(
+  collapse = TRUE,
+  comment = "#>",
+  fig.width = 7, fig.height = 5
+)
+library(csurvey)
+library(survey)
+```
+
+
+## Introduction
+
+The **csurvey** package extends the well-known **survey** package by allowing users to impose **order constraints** on domain means (or on the systematic component for GLMs). When such constraints are reasonable (e.g., cholesterol increases with age), they can: 
+
+* Reduce variance and shorten confidence intervals
+
+* Allow estimation and inference in small or even empty domains
+
+* Provide one-sided hypothesis tests and a cone information criterion (CIC) for model selection
+
+This vignette gives a brief workflow using the examples that are implemented with the
+package data sets:
+
+- nhdat: This is a subset of the 2009 to 2010 NHANES data. It includes participants aged 21 to 45 years, selected for illustrating the estimation of the probability of high cholesterol using order constrained survey methods (binary outcome). 
+
+- nhdat2: This is a subset of the 2009 to 2010 NHANES data. It includes participants aged 21 to 45 years,  selected to demonstrate estimation of domain means using order constrained methods. 
+
+For more complete details and additional examples (including NSCG data), see the accompanying R Journal article on csurvey.
+
+## How to use csurvey
+
+The **csurvey** package relies on the functions in the **survey** package such as `svydesign` and `svrepdesign`, which allow users to specify the survey design. This function produces an object that contains information about the sampling design, allowing the user to specify strata, sampling weights, etc. 
+
+The **csurvey** package provides users with symbolic functions, such as `incr`, `decr`, etc, to impose ordering constraints.
+
+## NHANES Examples 
+
+The National Health and Nutrition Examination Survey (NHANES) combines in-person interviews and physical examinations to produce a comprehensive data set from a probability sample of residents of the U.S. The data are made available to the public at this [CDC NHANES website](https://wwwn.cdc.gov/nchs/nhanes/). 
+
+The subset used in for the first two examples is derived from the 2009–2010 NHANES cycle and is provided in the `csurvey` package as the `nhdat2` data set. We consider the task of estimating the average total cholesterol level (mg/dL), originally recorded as `LBXTC` in the raw NHANES data, by age (in years), corresponding to the original variable `RIDAGEYR`. Focusing on young adults aged 21 to 45, we analyze a sample of $n = 1,933$ participants and specify the survey design using the associated weights and strata available in the data.
+
+### 1. Domain means monotonic in one dimension
+
+```{r}
+library(csurvey)
+data(nhdat2, package = "csurvey")
+dstrat <- svydesign(ids = ~id,  strata = ~str, data = nhdat2,  weight = ~wt)
+```
+
+Then, to get the proposed constrained domain mean estimate, we use the `csvy` function in the `csurvey` package. In this function, `incr` is a symbolic function used to define that the population domain means of `chol` are increasing with respect to the predictor `age`. 
+
+```{r}
+ans <- csvy(chol ~ incr(age), design = dstrat, n.mix = 100)
+```
+
+The `n.mix` parameter controls the number of simulations used to estimate the mixture covariance matrix, with a default of `n.mix = 100`. To speed up computation, users can set `n.mix` to be a smaller number, e.g., 10.
+
+We can extract from `ans` the CIC value for the constrained estimator as
+
+```{r}
+cat("CIC (constrained):", ans$CIC, "\n")
+```
+
+and the CIC value for the unconstrained estimator as
+
+```{r}
+cat("CIC (unconstrained):", ans$CIC.un, "\n")
+```
+
+We see that for this example, the constrained estimator has a smaller CIC value and this implies it is a better fit.
+
+The `csvy` function produces both the constrained fit and the corresponding unconstrained fit using methods from the **survey** package. A visual comparison between the two fits can be easily obtained by applying the `plot` method to the resulting `csvy` object with specifying the argument `type = "both"`.
+
+For illustration, we display the estimated domain means along with $95\%$ confidence intervals by the following code:
+
+```{r}
+plot(ans, type = "both")
+```
+
+The `confint` function can be used to extract the confidence interval for domain mean. When the response is not Gaussian, then `type="link"` produces the confidence interval for average systematic component over domains, while `type="response"` produces the confidence interval for the domain mean. 
+
+### 2. Domain means monotonic in two dimensions and unconstrained in the third dimension
+
+For this `nhdat2` data set, the sample sizes for each of the twenty-five ages range from 54 to 99, so that none of the domains is "small."  To demonstrate `csvy` in the case of small domains, we next provide domain mean estimates and confidence intervals for $400$ domains, arranged in a grid with 25 ages (`age`), four waist-size categories (`wcat`), and four income categories (`icat`). 
+
+The domain sample sizes average only 4.8 observations, and there are 16 empty domains. The sample size for each domain can be checked by `ans$nd`. To estimate the population means we assume average cholesterol level is increasing in both age and waist size, but no ordering is imposed on income categories:
+
+```{r}
+set.seed(1)
+ans <- csvy(chol ~ incr(age)*incr(wcat)*icat, design = dstrat)
+```
+
+To extract estimates and confidence intervals for specific domains defined by the model, the user can use the `predict` function as follows:
+
+```{r}
+domains <- data.frame(age = c(24, 35), wcat = c(2, 4), icat = c(2, 3))
+pans <- predict(ans, newdata = domains, se.fit = TRUE)
+cat("Predicted values, confidence intervals and standard errors for specified domains:\n")
+print (pans)
+```
+
+The `plot` function displays the domain mean estimates along with $95\%$ confidence intervals, highlighting in red the two domains specified in the `predict` function. The code to create this plot is as below. The `control` argument is used let the user adjust aesthetics of the plot.
+
+```{r}
+ctl <- list(x1lab = "waist", x2lab = "income", subtitle.size = 8)
+plot(ans, x1 = "wcat", x2 = "icat", control = ctl, domains = domains)
+```
+
+The user can visualize the unconstrained fit by specifying `type = "unconstrained"` in the `plot` function.
+
+```{r}
+plot(ans, x1 = "wcat", x2 = "icat", control = ctl, type="unconstrained")
+```
+
+### 3. Binary outcome
+
+We use another subset of the NHANES 2009–2010 data to demonstrate how our method applies when the outcome is binary. This subset is included in the `csurvey` package as `nhdat`. It contains $n = 1,680$ observations with complete records on total cholesterol, age, height, and waist circumference for adults aged 21–40. The binary outcome indicates whether an individual has high total cholesterol, coded as 1 if total cholesterol exceeds 200 mg/dL, and 0 otherwise. We estimate the population proportion with high cholesterol by age, waist, and gender (1 = male, 2 = female). The waist variable, denoted as `wcat`, is a 4-level categorized ordinal variable representing waist-to-height ratios. 
+
+It is reasonable to assume that, on average, the proportion of individuals with high cholesterol increases with both age and waist. The model is specified using the following code:
+  
+```{r}
+data(nhdat, package = "csurvey")
+dstrat <- svydesign(ids = ~ id,  strata = ~ str, data = nhdat,  weight = ~ wt)
+set.seed(1)
+ans <- csvy(chol ~ incr(age) * incr(wcat) * gender, design = dstrat,
+            family = binomial(link = "logit"), test = TRUE)
+```
+
+The CIC of the constrained estimator is smaller than that of the unconstrained estimator, and the one-sided hypothesis test has a $p$-value close to zero.
+  
+```{r}
+summary(ans)
+```
+
+The combination of age, waist and gender gives 160 domains. This implies that the average sample size for each domain is only around 10. Due to the small sample sizes, the unconstrained estimator shows unlikely jumps as age increases within each waist category. On the other hand, the constrained estimator is more stable and tend to have smaller confidence intervals compared with the unconstrained Hájek estimator.
+
+```{r}
+ctl <- list(angle = 0, x1size = 2, x2size = 2, x1lab = "waist", x2_labels = c("male", "female"),
+  subtitle.size=6)
+plot(ans, x1 = "wcat", x2 = "gender", type="both", control = ctl)
+```
+
+## NSCG Examples and External Data
+
+The csurvey paper with the R Journal also includes more complex examples based on the 2019 National Survey of
+College Graduates (NSCG). These data sets are too large to include in the CRAN package, so they are provided separately in a GitHub data repository:
+
+- GitHub repo: xliaosdsu/csurvey-data
+
+- Files: nscg19.rda, nscg19_2.rda
+
+To reproduce the NSCG examples on your own machine, you can download the data as follows:
+
+```{r eval = FALSE}
+url1 <- "[https://github.com/xliaosdsu/csurvey-data/raw/main/nscg19.rda](https://github.com/xliaosdsu/csurvey-data/raw/main/nscg19.rda)"
+url2 <- "[https://github.com/xliaosdsu/csurvey-data/raw/main/nscg19_2.rda](https://github.com/xliaosdsu/csurvey-data/raw/main/nscg19_2.rda)"
+
+dest1 <- tempfile(fileext = ".rda")
+dest2 <- tempfile(fileext = ".rda")
+
+download.file(url1, destfile = dest1, mode = "wb")
+download.file(url2, destfile = dest2, mode = "wb")
+
+load(dest1)  # creates object nscg19
+load(dest2)  # creates object nscg19_2
+```
+
+You can then follow the detailed NSCG analysis shown in the accompanying the R Journal article
+for csurvey, which includes:
+
+- Block orderings (e.g., STEM vs non-STEM fields)
+
+- One-sided tests for salary increasing with father’s education
+
+- Plots using `plot()` and `plotpersp()` over multiple predictors
+
+Because CRAN checks do not allow network access and the NSCG data are large, the NSCG examples are not executed in this vignette, but the paper and GitHub repo together provide a reproducible workflow for interested users.
+
+## References
+
+- X. Liao and and M. C. Meyer. csurvey: Implementing Order Constraints in Survey Data Analysis. _(accepted by The R Journal)_ 2025.
+
+- T. Lumley. Analysis of complex survey samples. _Journal of Statistical Software_, 9(8):1–19, 2004. doi:
+10.18637/jss.v009.i08. [p1, 2]
+
+

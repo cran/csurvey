@@ -28,14 +28,16 @@
 #' @param hjust Numeric. Horizontal justification for rotated x-axis labels. Default is \code{.1} (right-aligned).
 #' @return A named list of graphical control parameters to be passed to the \code{control} argument in \code{\link{plot.csvy}}.
 #' @examples
-#' plot_csvy_control(
-#'   x1lab = "Age Group", 
-#'   x2lab = "Region", 
-#'   constrained_color = "cornflowerblue", 
-#'   unconstrained_color = "gray80",
-#'   x1size = 4.5
-#' )
-#'
+#' data(nhdat2, package = 'csurvey')
+#' dstrat <- svydesign(ids = ~id, strata = ~str, data = nhdat2, weight = ~wt)
+#' ans <- csvy(chol ~ incr(age), design = dstrat, n.mix=5)
+#' #check the constrained fit vs the unconstrained fit with default aesthetics
+#' ctl <- plot_csvy_control()
+#' plot(ans, type = 'both', control = ctl)
+#' #check the fit with user-defined aethetics
+#' ctl <- list(x1lab = "Age Group", x2lab = "Region", constrained_color = "cornflowerblue", 
+#' unconstrained_color = "gray80", x1size = 4.5)
+#' plot(ans, type = 'both', control = ctl)
 #' @export
 plot_csvy_control <- function(x1lab = NULL, x1_labels = TRUE, x2lab = NULL, x2_labels = TRUE, 
                               x3lab=NULL, x3_labels = TRUE, x4_vals = NULL, x4_labels = NULL, ynm = NULL, ci = TRUE,
